@@ -212,6 +212,9 @@ export async function verifyBuiltinCommand(options: BuiltinVerifyOptions): Promi
       differences: result.differences ?? [],
       passed: result.passed === true,
       error: result.observations?.[systemIds[0] ?? '']?.error ?? undefined,
+      // Keep the normalized observations in the report so every renderer and
+      // every downstream agent consumes the same deterministic source model.
+      observations: result.observations,
     })),
     summary: {
       total: totalScenarios,
