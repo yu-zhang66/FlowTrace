@@ -1,0 +1,32 @@
+project:
+  id: supply-chain
+  name: 供应链融资管理系统
+  sourceRoot: ../../..
+
+pilot:
+  process: financing-application-approval
+  currentAdapterMode: legacy-shadow
+  note: Pilot project for FlowTrace dual-run verification
+
+paths:
+  facts: facts
+  scenarios: scenarios
+  reports: reports
+  mappings: mappings
+  semantic: semantic
+  fixtures: fixtures
+  executions: .flowtrace/executions
+  mocks: mocks
+
+execution:
+  mode: dual-run
+  allowOnlineWrite: false
+  databaseMode: snapshot-only
+  testDataMode: masked-or-snapshot
+  failOn:
+    - P0
+    - P1
+
+adapters:
+  legacy: adapters/legacy-flow-adapter.mjs
+  current: adapters/current-flow-adapter.mjs

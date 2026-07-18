@@ -1,0 +1,43 @@
+id: financing-approval-permission-denied-001
+name: 权限不足拒绝操作
+process: financing-application-approval
+severity: P0
+source:
+  - facts/baseline.json#financing-approval-process
+input:
+  financingAmount: 2000000
+  financingTerm: 6
+  coreEnterprise: CORE_ENT_001
+  supplier: SUPPLIER_011
+  riskLevel: NORMAL
+  creditLimit: 5000000
+  unauthorizedActor: trainee_approver
+actions:
+  - type: SUBMIT
+    actor: supplier
+    data:
+      financingAmount: 2000000
+      financingTerm: 6
+  - type: APPROVE
+    actor: core_enterprise_reviewer
+    data:
+      comment: 核心企业审核通过
+  - type: REJECT
+    actor: trainee_approver
+    data:
+      reason: 无审批权限
+expected:
+  finalState: REJECTED
+  semanticPath:
+    - SUBMIT
+    - CORE_ENTERPRISE_REVIEW
+    - REJECTED
+  database:
+    financing_application.status: REJECTED
+    financing_application.rejection_reason: 审批人无权限
+    financing_application.permission_check: FAILED
+tags:
+  - permission
+  - unauthorized
+  - P0
+enabled: true

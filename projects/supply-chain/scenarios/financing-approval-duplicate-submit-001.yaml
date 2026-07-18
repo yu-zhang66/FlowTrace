@@ -1,0 +1,41 @@
+id: financing-approval-duplicate-submit-001
+name: 重复提交幂等性验证
+process: financing-application-approval
+severity: P2
+source:
+  - facts/baseline.json#financing-approval-process
+input:
+  financingAmount: 2000000
+  financingTerm: 6
+  coreEnterprise: CORE_ENT_001
+  supplier: SUPPLIER_013
+  riskLevel: NORMAL
+  creditLimit: 5000000
+  duplicateSubmission: true
+actions:
+  - type: SUBMIT
+    actor: supplier
+    data:
+      financingAmount: 2000000
+      financingTerm: 6
+      idempotencyKey: duplicate-test-key-001
+  - type: SUBMIT
+    actor: supplier
+    data:
+      financingAmount: 2000000
+      financingTerm: 6
+      idempotencyKey: duplicate-test-key-001
+expected:
+  finalState: SUBMITTED
+  semanticPath:
+    - SUBMIT
+    - SUBMITTED
+  database:
+    financing_application.status: SUBMITTED
+    financing_application.submission_count: 1
+    financing_application.idempotency_key: duplicate-test-key-001
+tags:
+  - idempotency
+  - duplicate
+  - P2
+enabled: true

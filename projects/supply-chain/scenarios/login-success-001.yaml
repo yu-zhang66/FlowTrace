@@ -1,0 +1,22 @@
+id: login-success-001
+name: 供应商用户登录成功
+process: login
+severity: P0
+actions:
+  - type: LOGIN
+    actor: supplier
+    data:
+      usernameRef: SUPPLIER_USERNAME
+      passwordRef: SUPPLIER_PASSWORD
+      domain: supply-chain
+expected:
+  finalState: AUTHENTICATED
+  semanticPath:
+    - LOGIN_PAGE
+    - LOGIN_SUBMITTED
+    - AUTHENTICATED
+tags:
+  - login
+  - success
+  - P0
+enabled: true

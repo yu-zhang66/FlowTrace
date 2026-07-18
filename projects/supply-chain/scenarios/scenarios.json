@@ -1,0 +1,28 @@
+{
+  "schemaVersion": "1.0",
+  "taskId": "pipeline-mrn7htvk-crt9md",
+  "processId": "demo-process",
+  "generatedAt": "2026-07-16T07:47:24.420Z",
+  "scenarios": [
+    {
+      "id": "demo-process-happy-path",
+      "name": "供应链系统主路径",
+      "process": "demo-process",
+      "actions": [
+        {
+          "type": "SUBMIT",
+          "actor": "applicant",
+          "data": {}
+        }
+      ],
+      "expected": {
+        "finalState": "REVIEWING"
+      },
+      "source": [
+        "../../../supply_chain",
+        "flowtrace.yaml"
+      ],
+      "enabled": true
+    }
+  ]
+}

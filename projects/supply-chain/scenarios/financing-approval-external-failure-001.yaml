@@ -1,0 +1,45 @@
+id: financing-approval-external-failure-001
+name: 外部系统超时失败
+process: financing-application-approval
+severity: P1
+source:
+  - facts/baseline.json#financing-approval-process
+input:
+  financingAmount: 2000000
+  financingTerm: 6
+  coreEnterprise: CORE_ENT_001
+  supplier: SUPPLIER_012
+  riskLevel: NORMAL
+  creditLimit: 5000000
+  externalSystemFailure: true
+actions:
+  - type: SUBMIT
+    actor: supplier
+    data:
+      financingAmount: 2000000
+      financingTerm: 6
+  - type: APPROVE
+    actor: core_enterprise_reviewer
+    data:
+      comment: 核心企业审核通过
+  - type: APPROVE
+    actor: risk_assessor
+    data:
+      comment: 风控评估通过，调用征信接口
+      externalCall: credit_check
+expected:
+  finalState: PENDING
+  semanticPath:
+    - SUBMIT
+    - CORE_ENTERPRISE_REVIEW
+    - RISK_ASSESSMENT
+    - EXTERNAL_TIMEOUT
+  database:
+    financing_application.status: PENDING
+    financing_application.external_status: TIMEOUT
+    financing_application.retry_count: 0
+tags:
+  - external
+  - timeout
+  - P1
+enabled: true

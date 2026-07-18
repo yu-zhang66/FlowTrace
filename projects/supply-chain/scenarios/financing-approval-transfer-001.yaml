@@ -1,0 +1,47 @@
+id: financing-approval-transfer-001
+name: 审批转办
+process: financing-application-approval
+severity: P2
+input:
+  financingAmount: 2000000
+  financingTerm: 6
+  coreEnterprise: CORE_ENT_001
+  supplier: SUPPLIER_006
+  riskLevel: NORMAL
+  creditLimit: 5000000
+actions:
+  - type: SUBMIT
+    actor: supplier
+    data:
+      financingAmount: 2000000
+      financingTerm: 6
+  - type: TRANSFER
+    actor: core_enterprise_reviewer
+    data:
+      to: another_reviewer
+      reason: 休假期间转办
+  - type: APPROVE
+    actor: another_reviewer
+    data:
+      comment: 代为审核通过
+  - type: APPROVE
+    actor: risk_assessor
+  - type: APPROVE
+    actor: financing_approver
+expected:
+  finalState: APPROVED
+  semanticPath:
+    - SUBMIT
+    - CORE_ENTERPRISE_REVIEW
+    - TRANSFERRED
+    - CORE_ENTERPRISE_REVIEW
+    - RISK_ASSESSMENT
+    - FINANCING_APPROVAL
+    - APPROVED
+  database:
+    financing_application.status: APPROVED
+    financing_application.reviewer: another_reviewer
+tags:
+  - transfer
+  - P2
+enabled: true

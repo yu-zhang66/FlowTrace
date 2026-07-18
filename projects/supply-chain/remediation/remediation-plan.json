@@ -1,0 +1,19 @@
+{
+  "taskId": "pipeline-mrn7htvk-crt9md",
+  "items": [
+    {
+      "id": "remediation-mrn7htvp-uhrzto",
+      "severity": "P2",
+      "title": "接入真实执行环境",
+      "description": "配置 legacy/current adapter、测试数据快照和数据库只读连接后重跑 verify。",
+      "relatedScenarioIds": [
+        "demo-process-happy-path"
+      ],
+      "relatedNodeIds": [
+        "process-entry"
+      ],
+      "status": "open"
+    }
+  ],
+  "rerunCommand": "flowtrace pipeline --project /Users/fengjue/project/szwl/FlowTrace/projects/supply-chain --resume"
+}

@@ -1,0 +1,38 @@
+id: financing-approval-rejected-core-001
+name: 核心企业审核拒绝
+process: financing-application-approval
+severity: P1
+source:
+  - facts/baseline.json#financing-approval-process
+input:
+  financingAmount: 2000000
+  financingTerm: 6
+  coreEnterprise: CORE_ENT_001
+  supplier: SUPPLIER_002
+  riskLevel: NORMAL
+  creditLimit: 3000000
+actions:
+  - type: SUBMIT
+    actor: supplier
+    data:
+      financingAmount: 2000000
+      financingTerm: 6
+  - type: REJECT
+    actor: core_enterprise_reviewer
+    data:
+      reason: 供应商资质不符合核心企业准入要求
+      comment: 该供应商不在核心企业合作名单中
+expected:
+  finalState: REJECTED
+  semanticPath:
+    - SUBMIT
+    - CORE_ENTERPRISE_REVIEW
+    - REJECTED
+  database:
+    financing_application.status: REJECTED
+    financing_application.rejection_reason: 供应商资质不符合
+tags:
+  - rejection
+  - core-enterprise
+  - P1
+enabled: true

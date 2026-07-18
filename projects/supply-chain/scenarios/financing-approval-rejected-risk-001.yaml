@@ -1,0 +1,45 @@
+id: financing-approval-rejected-risk-001
+name: 风控评估拒绝高风险申请
+process: financing-application-approval
+severity: P1
+source:
+  - facts/baseline.json#FR001
+input:
+  financingAmount: 3000000
+  financingTerm: 12
+  coreEnterprise: CORE_ENT_001
+  supplier: SUPPLIER_003
+  riskLevel: HIGH
+  creditLimit: 5000000
+  negativeRecords: true
+actions:
+  - type: SUBMIT
+    actor: supplier
+    data:
+      financingAmount: 3000000
+      financingTerm: 12
+  - type: APPROVE
+    actor: core_enterprise_reviewer
+    data:
+      comment: 核心企业审核通过
+  - type: REJECT
+    actor: risk_assessor
+    data:
+      reason: 供应商存在负面信用记录
+      riskDetails: 该供应商存在未结清债务
+expected:
+  finalState: REJECTED
+  semanticPath:
+    - SUBMIT
+    - CORE_ENTERPRISE_REVIEW
+    - RISK_ASSESSMENT
+    - REJECTED
+  database:
+    financing_application.status: REJECTED
+    financing_application.rejection_reason: 存在负面信用记录
+    risk_assessment.result: FAIL
+tags:
+  - rejection
+  - risk-control
+  - P1
+enabled: true

@@ -1,0 +1,49 @@
+id: financing-approval-normal-001
+name: 正常融资申请审批通过
+process: financing-application-approval
+severity: P0
+source:
+  - facts/baseline.json#financing-approval-process
+  - facts/baseline.json#FR001
+input:
+  financingAmount: 1000000
+  financingTerm: 6
+  coreEnterprise: CORE_ENT_001
+  supplier: SUPPLIER_001
+  riskLevel: LOW
+  creditLimit: 5000000
+actions:
+  - type: SUBMIT
+    actor: supplier
+    data:
+      financingAmount: 1000000
+      financingTerm: 6
+      purpose: 采购原材料
+  - type: APPROVE
+    actor: core_enterprise_reviewer
+    data:
+      comment: 核心企业审核通过
+  - type: APPROVE
+    actor: risk_assessor
+    data:
+      comment: 风控评估通过
+  - type: APPROVE
+    actor: financing_approver
+    data:
+      approvedAmount: 1000000
+expected:
+  finalState: APPROVED
+  semanticPath:
+    - SUBMIT
+    - CORE_ENTERPRISE_REVIEW
+    - RISK_ASSESSMENT
+    - FINANCING_APPROVAL
+    - APPROVED
+  database:
+    financing_application.status: APPROVED
+    financing_application.approved_amount: 1000000
+tags:
+  - happy-path
+  - normal-flow
+  - P0
+enabled: true

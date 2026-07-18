@@ -1,0 +1,38 @@
+{
+  "legacy": {
+    "baseUrl": "http://localhost:3001",
+    "usernameEnv": "SUPPLIER_USERNAME",
+    "passwordEnv": "SUPPLIER_PASSWORD",
+    "selectors": {
+      "username": "input#username",
+      "password": "input#password",
+      "submit": "button[type=\"submit\"]",
+      "error": ".error-message"
+    },
+    "successValidation": {
+      "urlPattern": "/dashboard"
+    },
+    "timeouts": {
+      "navigation": 10000,
+      "action": 5000
+    }
+  },
+  "current": {
+    "baseUrl": "http://localhost:3002",
+    "usernameEnv": "SUPPLIER_USERNAME",
+    "passwordEnv": "SUPPLIER_PASSWORD",
+    "selectors": {
+      "username": "input#username",
+      "password": "input#password",
+      "submit": "button[type=\"submit\"]",
+      "error": ".error-message"
+    },
+    "successValidation": {
+      "urlPattern": "/dashboard"
+    },
+    "timeouts": {
+      "navigation": 10000,
+      "action": 5000
+    }
+  }
+}

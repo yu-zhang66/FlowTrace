@@ -1,0 +1,75 @@
+{
+  "schemaVersion": "1.0",
+  "taskId": "pipeline-mrn7htvk-crt9md",
+  "projectId": "supply-chain",
+  "processId": "demo-process",
+  "createdAt": "2026-07-16T07:47:24.416Z",
+  "updatedAt": "2026-07-16T07:47:24.422Z",
+  "currentStage": "remediate",
+  "stages": [
+    {
+      "stage": "collect",
+      "status": "passed",
+      "startedAt": "2026-07-16T07:47:24.417Z",
+      "artifact": "evidence/process-evidence.json",
+      "message": "2 sources, 0 nodes",
+      "completedAt": "2026-07-16T07:47:24.418Z"
+    },
+    {
+      "stage": "enhance",
+      "status": "passed",
+      "startedAt": "2026-07-16T07:47:24.419Z",
+      "artifact": "evidence/process-evidence.json",
+      "message": "confidence=0.65",
+      "completedAt": "2026-07-16T07:47:24.419Z"
+    },
+    {
+      "stage": "confirm",
+      "status": "passed",
+      "startedAt": "2026-07-16T07:47:24.419Z",
+      "artifact": "evidence/process-evidence.json",
+      "message": "confirmed",
+      "completedAt": "2026-07-16T07:47:24.419Z"
+    },
+    {
+      "stage": "generate-cases",
+      "status": "passed",
+      "startedAt": "2026-07-16T07:47:24.420Z",
+      "artifact": "scenarios/scenarios.json",
+      "message": "1 scenario",
+      "completedAt": "2026-07-16T07:47:24.420Z"
+    },
+    {
+      "stage": "validate-cases",
+      "status": "passed",
+      "startedAt": "2026-07-16T07:47:24.420Z",
+      "artifact": "scenarios/validation.json",
+      "message": "valid",
+      "completedAt": "2026-07-16T07:47:24.420Z"
+    },
+    {
+      "stage": "execute",
+      "status": "passed",
+      "startedAt": "2026-07-16T07:47:24.420Z",
+      "artifact": "executions/pipeline-execution.json",
+      "message": "execution handoff ready",
+      "completedAt": "2026-07-16T07:47:24.421Z"
+    },
+    {
+      "stage": "analyze",
+      "status": "passed",
+      "startedAt": "2026-07-16T07:47:24.421Z",
+      "artifact": "analysis/findings.json",
+      "message": "findings generated",
+      "completedAt": "2026-07-16T07:47:24.421Z"
+    },
+    {
+      "stage": "remediate",
+      "status": "passed",
+      "startedAt": "2026-07-16T07:47:24.421Z",
+      "artifact": "remediation/remediation-plan.json",
+      "message": "remediation plan generated",
+      "completedAt": "2026-07-16T07:47:24.422Z"
+    }
+  ]
+}

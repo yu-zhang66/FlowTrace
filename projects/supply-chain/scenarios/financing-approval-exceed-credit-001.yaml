@@ -1,0 +1,49 @@
+id: financing-approval-exceed-credit-001
+name: 超额融资需要额外审批
+process: financing-application-approval
+severity: P0
+source:
+  - facts/baseline.json#FR001
+input:
+  financingAmount: 6000000
+  financingTerm: 12
+  coreEnterprise: CORE_ENT_001
+  supplier: SUPPLIER_001
+  riskLevel: NORMAL
+  creditLimit: 5000000
+actions:
+  - type: SUBMIT
+    actor: supplier
+    data:
+      financingAmount: 6000000
+      financingTerm: 12
+      purpose: 扩大生产
+  - type: APPROVE
+    actor: core_enterprise_reviewer
+    data:
+      comment: 核心企业审核通过
+  - type: APPROVE
+    actor: risk_assessor
+    data:
+      comment: 风控评估通过
+  - type: APPROVE
+    actor: financing_approver
+    data:
+      approvedAmount: 5000000
+      note: 超出授信额度，批准额度为授信上限
+expected:
+  finalState: APPROVED_WITH_MODIFICATION
+  semanticPath:
+    - SUBMIT
+    - CORE_ENTERPRISE_REVIEW
+    - RISK_ASSESSMENT
+    - FINANCING_APPROVAL
+    - APPROVED_WITH_MODIFICATION
+  database:
+    financing_application.status: APPROVED_WITH_MODIFICATION
+    financing_application.approved_amount: 5000000
+tags:
+  - boundary
+  - exceed-credit
+  - P0
+enabled: true

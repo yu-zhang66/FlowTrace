@@ -1,0 +1,66 @@
+id: financing-approval-returned-001
+name: 风控退回补充材料
+process: financing-application-approval
+severity: P1
+source:
+  - facts/baseline.json#financing-approval-process
+input:
+  financingAmount: 2000000
+  financingTerm: 6
+  coreEnterprise: CORE_ENT_001
+  supplier: SUPPLIER_004
+  riskLevel: NORMAL
+  creditLimit: 3000000
+  missingDocuments: true
+actions:
+  - type: SUBMIT
+    actor: supplier
+    data:
+      financingAmount: 2000000
+      financingTerm: 6
+  - type: APPROVE
+    actor: core_enterprise_reviewer
+    data:
+      comment: 核心企业审核通过
+  - type: RETURN
+    actor: risk_assessor
+    data:
+      reason: 需补充财务报表
+      requiredDocuments:
+        - 近一年财务报表
+        - 银行流水
+  - type: SUBMIT
+    actor: supplier
+    data:
+      documentsAttached: true
+      financialStatements: "attached"
+      bankStatements: "attached"
+  - type: APPROVE
+    actor: core_enterprise_reviewer
+    data:
+      comment: 核心企业再次审核通过
+  - type: APPROVE
+    actor: risk_assessor
+    data:
+      comment: 风控评估通过
+  - type: APPROVE
+    actor: financing_approver
+expected:
+  finalState: APPROVED
+  semanticPath:
+    - SUBMIT
+    - CORE_ENTERPRISE_REVIEW
+    - RISK_ASSESSMENT
+    - RETURN
+    - RESUBMIT
+    - CORE_ENTERPRISE_REVIEW
+    - RISK_ASSESSMENT
+    - FINANCING_APPROVAL
+    - APPROVED
+  database:
+    financing_application.status: APPROVED
+tags:
+  - return
+  - resubmit
+  - P1
+enabled: true

@@ -1,0 +1,32 @@
+id: financing-approval-withdraw-001
+name: 申请人撤回融资申请
+process: financing-application-approval
+severity: P2
+input:
+  financingAmount: 1500000
+  financingTerm: 6
+  coreEnterprise: CORE_ENT_001
+  supplier: SUPPLIER_005
+  riskLevel: LOW
+  creditLimit: 3000000
+actions:
+  - type: SUBMIT
+    actor: supplier
+    data:
+      financingAmount: 1500000
+      financingTerm: 6
+  - type: WITHDRAW
+    actor: supplier
+    data:
+      reason: 申请有误需重新提交
+expected:
+  finalState: WITHDRAWN
+  semanticPath:
+    - SUBMIT
+    - WITHDRAWN
+  database:
+    financing_application.status: WITHDRAWN
+tags:
+  - withdraw
+  - P2
+enabled: true

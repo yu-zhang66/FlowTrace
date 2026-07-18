@@ -1,0 +1,49 @@
+id: financing-approval-rejected-financing-001
+name: 融资机构审批拒绝
+process: financing-application-approval
+severity: P1
+source:
+  - facts/baseline.json#financing-approval-process
+input:
+  financingAmount: 2000000
+  financingTerm: 6
+  coreEnterprise: CORE_ENT_001
+  supplier: SUPPLIER_010
+  riskLevel: NORMAL
+  creditLimit: 5000000
+actions:
+  - type: SUBMIT
+    actor: supplier
+    data:
+      financingAmount: 2000000
+      financingTerm: 6
+  - type: APPROVE
+    actor: core_enterprise_reviewer
+    data:
+      comment: 核心企业审核通过
+  - type: APPROVE
+    actor: risk_assessor
+    data:
+      comment: 风控评估通过
+  - type: REJECT
+    actor: financing_approver
+    data:
+      reason: 资金流动性不足
+      comment: 近期有大额支出，暂缓批准
+expected:
+  finalState: REJECTED
+  semanticPath:
+    - SUBMIT
+    - CORE_ENTERPRISE_REVIEW
+    - RISK_ASSESSMENT
+    - FINANCING_APPROVAL
+    - REJECTED
+  database:
+    financing_application.status: REJECTED
+    financing_application.rejection_reason: 资金流动性不足
+    financing_application.rejector: financing_approver
+tags:
+  - rejection
+  - financing-institution
+  - P1
+enabled: true

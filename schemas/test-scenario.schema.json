@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://flowtrace.local/schemas/test-scenario.schema.json",
+  "title": "FlowTrace Test Scenario",
+  "type": "object",
+  "required": ["id", "name", "process", "actions", "expected"],
+  "properties": {
+    "id": {"type": "string", "minLength": 1},
+    "name": {"type": "string", "minLength": 1},
+    "process": {"type": "string", "minLength": 1},
+    "severity": {"enum": ["P0", "P1", "P2", "P3"]},
+    "source": {"type": "array", "items": {"type": "string"}},
+    "precondition": {"type": "object"},
+    "input": {"type": "object"},
+    "actions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["type", "actor"],
+        "properties": {
+          "type": {"enum": ["SUBMIT", "APPROVE", "REJECT", "RETURN", "WITHDRAW", "TRANSFER", "COUNTERSIGN"]},
+          "actor": {"type": "string"},
+          "data": {"type": "object"}
+        }
+      }
+    },
+    "expected": {
+      "type": "object",
+      "required": ["finalState"],
+      "properties": {
+        "finalState": {"type": "string"},
+        "semanticPath": {"type": "array", "items": {"type": "string"}},
+        "database": {"type": "object"},
+        "externalCalls": {"type": "array", "items": {"type": "object"}}
+      }
+    },
+    "status": {"enum": ["NEEDS_REVIEW", "CONFIRMED"]},
+    "review": {
+      "type": "object",
+      "properties": {
+        "status": {"enum": ["NEEDS_REVIEW", "CONFIRMED"]},
+        "unmappedSteps": {"type": "array", "items": {"type": "string"}},
+        "reason": {"type": "string"},
+        "warnings": {"type": "array", "items": {"type": "string"}}
+      }
+    }
+  }
+}

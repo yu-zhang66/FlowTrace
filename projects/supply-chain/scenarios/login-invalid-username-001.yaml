@@ -1,0 +1,22 @@
+id: login-invalid-username-001
+name: 供应商用户登录-用户名不存在
+process: login
+severity: P0
+actions:
+  - type: LOGIN
+    actor: supplier
+    data:
+      usernameRef: INVALID_USERNAME
+      passwordRef: SUPPLIER_PASSWORD
+      domain: supply-chain
+expected:
+  finalState: LOGIN_FAILED
+  semanticPath:
+    - LOGIN_PAGE
+    - LOGIN_SUBMITTED
+    - LOGIN_FAILED
+tags:
+  - login
+  - invalid-username
+  - P0
+enabled: true

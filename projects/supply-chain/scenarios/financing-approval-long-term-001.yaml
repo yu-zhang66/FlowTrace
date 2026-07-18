@@ -1,0 +1,47 @@
+id: financing-approval-long-term-001
+name: 长期限融资申请审批
+process: financing-application-approval
+severity: P2
+input:
+  financingAmount: 1000000
+  financingTerm: 24
+  coreEnterprise: CORE_ENT_001
+  supplier: SUPPLIER_007
+  riskLevel: NORMAL
+  creditLimit: 5000000
+actions:
+  - type: SUBMIT
+    actor: supplier
+    data:
+      financingAmount: 1000000
+      financingTerm: 24
+      purpose: 设备采购
+  - type: APPROVE
+    actor: core_enterprise_reviewer
+  - type: APPROVE
+    actor: risk_assessor
+    data:
+      comment: 长期限申请，风控评估通过
+  - type: COUNTERSIGN
+    actor: finance_officer
+    data:
+      comment: 财务复核通过
+  - type: APPROVE
+    actor: financing_approver
+expected:
+  finalState: APPROVED
+  semanticPath:
+    - SUBMIT
+    - CORE_ENTERPRISE_REVIEW
+    - RISK_ASSESSMENT
+    - COUNTERSIGN
+    - FINANCING_APPROVAL
+    - APPROVED
+  database:
+    financing_application.status: APPROVED
+    financing_application.term: 24
+tags:
+  - long-term
+  - countersign
+  - P2
+enabled: true

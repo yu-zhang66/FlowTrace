@@ -1,0 +1,18 @@
+{
+  "taskId": "pipeline-mrn7htvk-crt9md",
+  "findings": [
+    {
+      "id": "finding-mrn7htvp-71tboo",
+      "severity": "P2",
+      "title": "等待真实适配器执行",
+      "description": "当前流水线已生成可执行案例，但真实 API/数据库适配器仍需配置。",
+      "relatedScenarioIds": [
+        "demo-process-happy-path"
+      ],
+      "relatedNodeIds": [
+        "process-entry"
+      ],
+      "status": "open"
+    }
+  ]
+}

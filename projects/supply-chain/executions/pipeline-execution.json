@@ -1,0 +1,5 @@
+{
+  "taskId": "pipeline-mrn7htvk-crt9md",
+  "status": "ready-for-verify",
+  "nextCommand": "flowtrace verify --project /Users/fengjue/project/szwl/FlowTrace/projects/supply-chain"
+}

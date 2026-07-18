@@ -1,0 +1,50 @@
+{
+  "schemaVersion": "1.0",
+  "taskId": "pipeline-mrn7htvk-crt9md",
+  "projectId": "supply-chain",
+  "processId": "demo-process",
+  "processName": "供应链系统",
+  "collectedAt": "2026-07-16T07:47:24.418Z",
+  "sources": [
+    {
+      "id": "evidence-mrn7htvm-ellch2",
+      "type": "source",
+      "path": "../../../supply_chain",
+      "summary": "源码目录已发现",
+      "extractedAt": "2026-07-16T07:47:24.418Z",
+      "confidence": 0.65
+    },
+    {
+      "id": "evidence-mrn7htvm-7ph2su",
+      "type": "database",
+      "path": "flowtrace.yaml",
+      "summary": "数据库配置已发现",
+      "extractedAt": "2026-07-16T07:47:24.418Z",
+      "confidence": 0.8,
+      "data": {
+        "type": "oracle",
+        "access": "read-only-collection-and-test-snapshot"
+      }
+    }
+  ],
+  "nodes": [
+    {
+      "id": "process-entry",
+      "name": "流程入口（待确认）",
+      "type": "unknown",
+      "actors": [],
+      "evidenceIds": [
+        "evidence-mrn7htvm-ellch2",
+        "evidence-mrn7htvm-7ph2su"
+      ],
+      "confidence": 0.35,
+      "confirmed": false
+    }
+  ],
+  "transitions": [],
+  "unresolvedQuestions": [
+    "请确认流程入口和关键业务节点"
+  ],
+  "confidence": 0.65,
+  "status": "confirmed"
+}

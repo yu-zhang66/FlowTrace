@@ -1,0 +1,38 @@
+{
+  "name": "flowtrace",
+  "version": "0.1.0",
+  "private": true,
+  "description": "FlowTrace - Legacy process baseline collection, AI-assisted test generation, and dual-run verification",
+  "type": "module",
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "scripts": {
+    "build": "pnpm -r build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck"
+  },
+  "keywords": [
+    "flowtrace",
+    "process-verification",
+    "legacy-migration",
+    "test-automation"
+  ],
+  "devDependencies": {
+    "@playwright/test": "^1.61.1",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^20.19.43",
+    "@vitest/coverage-v8": "^1.6.1",
+    "ajv": "^8.20.0",
+    "chalk": "^5.6.2",
+    "commander": "^15.0.0",
+    "js-yaml": "^5.2.1",
+    "typescript": "^5.9.3",
+    "vitest": "^1.6.1",
+    "zod": "^3.25.76"
+  }
+}

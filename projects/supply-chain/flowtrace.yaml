@@ -1,0 +1,71 @@
+project:
+  id: supply-chain
+  name: 供应链系统
+  sourceRoot: /Users/fengjue/project/szwl/supply_chain
+
+execution:
+  mode: dual-run
+  allowOnlineWrite: false
+  databaseMode: snapshot-only
+  testDataMode: masked-or-snapshot
+  failOn: [P0, P1]
+
+test:
+  process: login
+  mode: dual-browser
+  headless: true
+  screenshot: on-failure
+  trace: retain-on-failure
+  legacy:
+    baseUrl: http://localhost:8000/its/
+    adapter: adapters/legacy-login-browser-adapter.mjs
+  current:
+    baseUrl: http://localhost:8000/its/
+    adapter: adapters/current-login-browser-adapter.mjs
+  actors:
+    admin:
+      usernameEnv: FLOWTRACE_ADMIN_USERNAME
+      passwordEnv: FLOWTRACE_ADMIN_PASSWORD
+    enterprise:
+      usernameEnv: FLOWTRACE_ENTERPRISE_USERNAME
+      passwordEnv: FLOWTRACE_ENTERPRISE_PASSWORD
+    institution:
+      usernameEnv: FLOWTRACE_INSTITUTION_USERNAME
+      passwordEnv: FLOWTRACE_INSTITUTION_PASSWORD
+
+pilot:
+  process: demo-process
+  currentAdapterMode: legacy-shadow
+  note: 新流程开发完成前，current adapter 临时复用 legacy adapter 的执行能力；切换新流程时只替换 adapter 和映射配置。
+
+legacy:
+  modules:
+    - zgserver/zg-modules/zg-autoflow
+    - zgserver/zg-modules/zg-scf
+    - zgserver/zg-modules/zg-system
+    - zgweb
+
+current:
+  adapter: adapters/CurrentFlowAdapter.java
+
+database:
+  type: oracle
+  configSource: /Users/fengjue/project/szwl/supply_chain
+  access: read-only-collection-and-test-snapshot
+
+paths:
+  facts: facts
+  mappings: mappings
+  scenarios: scenarios
+  fixtures: fixtures
+  mocks: mocks
+  reports: reports
+
+actions:
+  - SUBMIT
+  - APPROVE
+  - REJECT
+  - RETURN
+  - WITHDRAW
+  - TRANSFER
+  - COUNTERSIGN
