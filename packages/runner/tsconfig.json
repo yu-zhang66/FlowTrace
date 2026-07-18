@@ -6,6 +6,5 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext"
   },
-  "include": ["src/**/*"],
-  "exclude": ["src/database-dual-runner.ts", "src/enhanced-dual-runner.ts"]
+  "include": ["src/**/*"]
 }

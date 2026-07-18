@@ -16,6 +16,92 @@ FlowTrace 是一套面向老系统流程替换的流程一致性测试与迁移�
 
 FlowTrace 通过旧流程基线采集、AI 辅助测试案例生成、新旧流程双跑、确定性结果比较和自动化报告，帮助团队在流程治理、节点合并、流程引擎替换和老系统迁移过程中发现并解释业务差异。
 
+## 快速开始
+
+### 安装
+
+要求 Node.js 20+、pnpm 9+。FlowTrace 当前以源码仓库方式提供：
+
+```bash
+git clone https://github.com/yu-zhang66/FlowTrace.git
+cd FlowTrace
+corepack enable
+pnpm install
+pnpm build
+pnpm flowtrace --help
+```
+
+构建产物位于各 workspace 的 `dist/` 目录，属于可重复生成文件，不提交到 Git。
+
+### 初始化目标项目
+
+FlowTrace 不依赖仓库内的示例项目作为运行目标。对任意目标项目执行：
+
+```bash
+pnpm flowtrace init --project /absolute/path/to/target-project
+```
+
+目标项目默认只维护配置和流程资产，不需要复制 FlowTrace 源码，也不需要创建 `.flowtrace/adapters/`：
+
+```text
+target-project/
+├── .flowtrace/
+│   ├── flowtrace.yaml       # 运行时、系统和目录配置
+│   ├── systems/             # legacy/current 系统声明
+│   ├── processes/           # 流程 DSL
+│   ├── scenarios/           # 测试案例
+│   ├── facts/               # 采集基线
+│   └── executions/          # 每次执行的完整成果物目录
+└── .env                     # 本机凭据，不提交
+```
+
+### 配置凭据
+
+在目标项目中填写 `.flowtrace/flowtrace.yaml` 的系统、流程和案例配置；敏感信息通过 `.env` 或 CI Secret 注入：
+
+```dotenv
+LEGACY_BASE_URL=https://legacy.example.com
+CURRENT_BASE_URL=https://current.example.com
+TEST_USERNAME=automation@example.com
+TEST_PASSWORD=change-me
+```
+
+不要把真实密码、Cookie、Token 或生产连接串写入 YAML、案例、报告或 Git。运行时会在证据保存前脱敏。
+
+### 完整执行流程
+
+```bash
+PROJECT=/absolute/path/to/target-project
+pnpm flowtrace status --project "$PROJECT"
+pnpm flowtrace collect --project "$PROJECT"
+pnpm flowtrace generate-cases --project "$PROJECT"
+pnpm flowtrace validate-cases --project "$PROJECT"
+pnpm flowtrace verify --project "$PROJECT"
+pnpm flowtrace report --project "$PROJECT" --format html
+```
+
+也可以使用一条命令执行编排流程：
+
+```bash
+pnpm flowtrace pipeline --project /absolute/path/to/target-project
+```
+
+复杂的 SSO、验证码、WebSocket、原生客户端或特殊数据库动作，才需要在配置中显式声明外部插件；这不是默认路径。
+
+### 查看成果物
+
+每次执行的所有成果物集中在一个目录：
+
+```text
+target-project/.flowtrace/executions/<run-id>/
+├── run.json
+├── evidence/       # 脱敏 JSON、截图、网络证据
+├── scenarios/      # 场景级观察和结果
+└── reports/        # 固定模板的 JSON、Markdown、HTML 报告
+```
+
+HTML 报告直接内嵌截图，展示 Legacy / Current 对比、操作结果、状态变化、HTTP 信息、差异和 Release Gate。历史执行可以直接按 `<run-id>` 文件夹查看或归档。
+
 ## 核心能力
 
 ## 技术框架
@@ -26,17 +112,15 @@ FlowTrace 第一阶段采用 TypeScript 全栈实现：
 Node.js 20 LTS+
 TypeScript 5+
 pnpm 9+ workspaces
-Fastify                 服务 API（预留服务化）
 Commander               CLI
 Zod + Ajv               运行时模型和 JSON Schema 校验
 js-yaml                 YAML 配置和测试案例
-Playwright              页面采集和 UI 自动化
+Playwright              可选的页面采集和 UI 自动化运行时
 Vitest                  FlowTrace 自身测试
-Vue 3 + Vite + Element Plus 轻量前端
-oracledb                Oracle 只读采集/隔离测试访问
+oracledb / pg           可选的只读数据库采集驱动
 ```
 
-MVP 不要求启动服务端和数据库，使用 CLI、文件、Git 和测试环境即可运行。服务化阶段再增加 Fastify API、Worker、Redis/BullMQ 和独立 Oracle Schema。
+当前版本使用 CLI、文件、Git 和测试环境即可运行，不要求启动独立服务端。数据库驱动和 Playwright 只在目标项目实际使用相应能力时启用。
 
 ### 1. 旧流程基线采集
 
@@ -240,18 +324,18 @@ flowtrace-adapter-sdk       适配器接口
 flowtrace-ai                AI 事实提取、案例生成和失败分析
 flowtrace-cli                命令行入口
 flowtrace-skill              AI 工作流编排
-<target-project>/.flowtrace  项目配置、适配器、事实、映射、案例和报告
+<target-project>/.flowtrace  项目配置、事实、映射、案例和报告
 ```
 
 接入一个新项目时，通常只需要在目标项目提供：
 
 - 项目配置
-- 旧流程适配器
-- 新流程适配器
-- 数据库快照或测试数据适配器
-- 外部系统 Mock 配置
-- 状态、节点和角色映射
+- 旧/新系统的 URL、认证引用、页面和 API 声明
+- 流程 DSL、状态、节点和角色映射
+- 数据库快照或外部系统 Mock 配置（如流程需要）
 - 项目专属测试案例
+
+只有非标准能力无法由内置运行时表达时，才需要显式外部插件。业务代码不应复制到 FlowTrace 核心，也不应默认放进目标项目的 `.flowtrace/`。
 
 核心测试引擎不应该写死具体项目的 URL、表名、角色名或流程引擎 API。供应链流程名称和规则只能存在于供应链目标项目的 `.flowtrace/` 产物或示例 fixtures 中。
 
@@ -288,7 +372,7 @@ AI 不能直接忽略差异、批准 P0 结果或修改核心业务规则。
 
 ## 当前项目状态
 
-当前仓库处于 MVP 准备阶段，首个试点为供应链系统的融资申请审批流程。新流程尚未开发，首期使用旧流程作为 current adapter 的临时替身，先验证完整测试链路。
+当前仓库提供可运行的配置驱动 MVP，包含内置 HTTP/浏览器运行时、声明式 DSL、采集、案例生成、双跑验证、证据和固定报告模板。`projects/supply-chain` 仅作为配置和案例参考，不应作为其他项目的运行时回退目标。
 
 已包含：
 
@@ -298,10 +382,12 @@ AI 不能直接忽略差异、批准 P0 结果或修改核心业务规则。
 - 差异比较器骨架
 - MVP 和试点实施文档
 
-后续优先实现一个真实流程的旧基线采集、旧新双跑和第一版报告。
+真实项目接入前，应先在测试环境完成配置校验、登录验证、数据隔离和 Release Gate 审核。
 
 ## 文档
 
+- [安装与迁移](docs/installation.md)
+- [目标项目接入指南](docs/target-project-guide.md)
 - [MVP 计划](docs/mvp-plan.md)
 - [架构设计](docs/architecture.md)
 - [供应链试点计划](docs/supply-chain-pilot.md)

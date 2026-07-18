@@ -3,7 +3,6 @@ export * from './scenario.js';
 export * from './execution.js';
 export * from './difference.js';
 export * from './browser.js';
-export * from './enhanced-scenario.js';
 export * from './semantic.js';
 export * from './api-execution.js';
 export * from './login-execution.js';

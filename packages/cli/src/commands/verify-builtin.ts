@@ -236,11 +236,11 @@ export async function verifyBuiltinCommand(options: BuiltinVerifyOptions): Promi
   await fs.writeFile(path.join(runReportDir, 'report.json'), rawJson, 'utf8');
   await fs.writeFile(path.join(reportDir, `${runId}.json`), rawJson, 'utf8');
 
-  const md = renderMarkdownReport(jsonReport);
+  const md = renderMarkdownReport(jsonReport, scenarios);
   await fs.writeFile(path.join(runReportDir, 'report.md'), md, 'utf8');
   await fs.writeFile(path.join(reportDir, `${runId}.md`), md, 'utf8');
 
-  const html = renderHtmlReport(jsonReport);
+  const html = renderHtmlReport(jsonReport, scenarios);
   await fs.writeFile(path.join(runReportDir, 'report.html'), html, 'utf8');
   await fs.writeFile(path.join(reportDir, `${runId}.html`), html, 'utf8');
 
@@ -343,17 +343,52 @@ function normalizeActualIllegal(obs: DslScenarioObservation): Array<{ actionInde
     }));
 }
 
-function renderMarkdownReport(report: any): string {
+function renderMarkdownReport(report: any, scenarios: LoadedScenario[]): string {
   const lines: string[] = [];
-  lines.push(`# FlowTrace Dual-Run Report`);
+  lines.push(`# FlowTrace Dual-Run Inspection Report — ${report.runId}`);
   lines.push('');
-  lines.push(`- Run ID: \`${report.runId}\``);
-  lines.push(`- Project: \`${report.projectPath}\``);
-  lines.push(`- Runtime: \`${report.runtimeAdapter}\``);
-  lines.push(`- Systems: ${report.systems.map((s: string) => `\`${s}\``).join(', ')}`);
-  lines.push(`- Scenarios: ${report.totalPassed}/${report.totalScenarios} passed`);
-  lines.push(`- Release Gate: **${report.releaseGate.allowed ? 'PASS' : 'BLOCKED'}**`);
+  lines.push('## Summary'); lines.push('');
+  lines.push('| Metric | Value |'); lines.push('| --- | --- |');
+  lines.push(`| Run ID | \`${report.runId}\` |`);
+  lines.push(`| Project | \`${report.projectPath}\` |`);
+  lines.push(`| Runtime | \`${report.runtimeAdapter}\` |`);
+  lines.push(`| Systems | ${report.systems.map((s: string) => `\`${s}\``).join(', ')} |`);
+  lines.push(`| Total Scenarios | ${report.totalScenarios} |`);
+  lines.push(`| Passed | ${report.totalPassed} |`);
+  lines.push(`| Failed | ${report.totalFailed} |`);
+  lines.push(`| Release Gate | **${report.releaseGate.allowed ? 'PASS' : 'BLOCKED'}** |`);
   lines.push('');
+  lines.push('## Final state comparison'); lines.push('');
+  lines.push('| Scenario | Legacy | Current | Result |'); lines.push('| --- | --- | --- | --- |');
+  for (const result of report.scenarios) {
+    const observations = result.observations ?? {};
+    const sides = report.systems.map((side: string) => observations[side]);
+    lines.push(`| ${result.scenarioId} | ${formatVal(sides[0]?.finalState)} | ${formatVal(sides[1]?.finalState)} | ${result.passed ? '✅' : '❌'} |`);
+  }
+  lines.push('');
+  lines.push('## Semantic path comparison'); lines.push('');
+  lines.push('| Scenario | Legacy path | Current path |'); lines.push('| --- | --- | --- |');
+  for (const result of report.scenarios) {
+    const observations = result.observations ?? {};
+    lines.push(`| ${result.scenarioId} | ${formatVal(observations[report.systems[0]]?.semanticPath)} | ${formatVal(observations[report.systems[1]]?.semanticPath)} |`);
+  }
+  lines.push('');
+  lines.push('## Illegal transition comparison (per declared action)'); lines.push('');
+  lines.push('| Scenario | Expected | Legacy | Current |'); lines.push('| --- | --- | --- | --- |');
+  for (const result of report.scenarios) {
+    const expected = scenarios.find((s) => s.id === result.scenarioId)?.expected as any;
+    const observations = result.observations ?? {};
+    lines.push(`| ${result.scenarioId} | ${formatVal(expected?.illegalActions ?? [])} | ${formatVal(observations[report.systems[0]]?.actions?.filter((a: any) => a.illegalTransition).map((a: any) => a.illegalTransition))} | ${formatVal(observations[report.systems[1]]?.actions?.filter((a: any) => a.illegalTransition).map((a: any) => a.illegalTransition))} |`);
+  }
+  lines.push('');
+  lines.push('## Scenario evidence and inspection details'); lines.push('');
+  for (const result of report.scenarios) {
+    const scenario = scenarios.find((s) => s.id === result.scenarioId);
+    lines.push(`### ${result.passed ? '✅' : '❌'} ${result.scenarioId}${scenario?.name ? ` — ${scenario.name}` : ''}`); lines.push('');
+    lines.push(`- Result: **${result.passed ? 'PASSED' : 'FAILED'}**`);
+    if (result.error) lines.push(`- Error: \`${result.error}\``);
+    lines.push(`- Evidence index: [${result.scenarioId}.json](../scenarios/${result.scenarioId}.json)`); lines.push('');
+  }
   if (report.differences.length > 0) {
     lines.push(`## Differences (${report.differences.length})`);
     lines.push('');
@@ -363,10 +398,14 @@ function renderMarkdownReport(report: any): string {
       lines.push(`| ${d.scenarioId} | ${d.processId} | ${d.severity} | ${d.kind} | ${formatVal(d.baseValue ?? d.baseSide)} | ${formatVal(d.otherValue ?? d.otherSide)} |`);
     }
   }
+  lines.push('## Execution summary'); lines.push('');
+  lines.push(`Scenarios: **${report.totalPassed}/${report.totalScenarios} passed**`); lines.push('');
+  lines.push('## Release Gate'); lines.push('');
+  lines.push(`**Status:** ${report.releaseGate.allowed ? '✅ ALLOWED' : '❌ BLOCKED'}`);
   return lines.join('\n');
 }
 
-function renderHtmlReport(report: any): string {
+function renderHtmlReport(report: any, scenarios: LoadedScenario[]): string {
   return [
     '<!doctype html><html><head><meta charset="utf-8"><title>FlowTrace Report ' + report.runId + '</title>',
     '<style>body{font-family:ui-sans-serif,system-ui,sans-serif;margin:24px;max-width:1080px;}',
@@ -380,7 +419,10 @@ function renderHtmlReport(report: any): string {
     '<p>Systems: ' + report.systems.map((s: string) => '<code>' + s + '</code>').join(', ') + '</p>',
     '<p>Scenarios: ' + report.totalPassed + '/' + report.totalScenarios + ' passed</p>',
     '<p>Release Gate: <span class="' + (report.releaseGate.allowed ? 'PASS' : 'BLOCKED') + '">' + (report.releaseGate.allowed ? 'PASS' : 'BLOCKED') + '</span></p>',
-    '<h2>Differences (' + report.differences.length + ')</h2>',
+    '<h2>Summary</h2><table><tr><th>Metric</th><th>Value</th></tr><tr><td>Total Scenarios</td><td>' + report.totalScenarios + '</td></tr><tr><td>Passed</td><td>' + report.totalPassed + '</td></tr><tr><td>Failed</td><td>' + report.totalFailed + '</td></tr></table>',
+    '<h2>Scenario evidence and inspection details</h2><table><tr><th>Scenario</th><th>Result</th><th>Legacy state</th><th>Current state</th></tr>',
+    report.scenarios.map((r: any) => '<tr><td>' + r.scenarioId + '</td><td>' + (r.passed ? 'PASSED' : 'FAILED') + '</td><td>' + formatVal(r.observations?.[report.systems[0]]?.finalState) + '</td><td>' + formatVal(r.observations?.[report.systems[1]]?.finalState) + '</td></tr>').join(''),
+    '</table><h2>Differences (' + report.differences.length + ')</h2>',
     report.differences.length > 0
       ? '<table><thead><tr><th>Scenario</th><th>Process</th><th>Severity</th><th>Kind</th><th>Base</th><th>Other</th></tr></thead><tbody>' +
         report.differences.map((d: any) =>

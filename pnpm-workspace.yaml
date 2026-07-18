@@ -1,6 +1,5 @@
 packages:
   - 'packages/*'
   - 'projects/*'
-allowBuilds:
-  esbuild: false
-  oracledb: set this to true or false
+onlyBuiltDependencies:
+  - oracledb
