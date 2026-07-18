@@ -12,6 +12,7 @@ export * from './scenario-renderer.js';
 export * from './business-report.js';
 export * from './test-case-markdown-renderer.js';
 export * from './verification-report-html-renderer.js';
+export * from './fixed-dual-run-report.js';
 
 export interface ReporterConfig {
   includeDetails: boolean;

@@ -19,6 +19,7 @@
  */
 
 import chalk from 'chalk';
+import { spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import yaml from 'js-yaml';
@@ -34,6 +35,8 @@ import {
   type ProcessDsl,
   type DslScenarioObservation,
 } from '@flowtrace/adapter';
+import { cleanupBuiltinRuntime } from '@flowtrace/adapter';
+import { renderFixedDualRunHtml } from '@flowtrace/reporter';
 
 interface BuiltinVerifyOptions {
   project?: string;
@@ -46,6 +49,8 @@ export async function verifyBuiltinCommand(options: BuiltinVerifyOptions): Promi
   const projectPath = options.project
     ? path.resolve(process.cwd(), options.project)
     : path.resolve(process.cwd());
+
+  if (await delegateToProjectEntrypoint(projectPath)) return;
 
   console.log(chalk.blue(`\nFlowTrace Verify (config-driven runtime)`));
   console.log(chalk.gray(`Project: ${projectPath}\n`));
@@ -61,6 +66,16 @@ export async function verifyBuiltinCommand(options: BuiltinVerifyOptions): Promi
   const runtimeBlock = (rawConfig.runtime ?? null) as RuntimeConfig | null;
   if (!runtimeBlock) {
     console.error(chalk.red(`flowtrace.yaml has no runtime: block. Run \`flowtrace init\` to generate a fresh config-driven layout.`));
+    process.exit(1);
+  }
+
+  // Fail before creating an execution bundle when login credentials are not
+  // available. An adapter-error bundle cannot contain meaningful traces or
+  // screenshots and must not be mistaken for a completed dual-run.
+  const missingCredentials = findMissingCredentialEnv(runtimeBlock);
+  if (missingCredentials.length > 0) {
+    console.error(chalk.red(`Missing runtime credentials: ${missingCredentials.join(', ')}`));
+    console.error(chalk.yellow('Provide them through the project environment (for the mock demo: `npm run test:flowtrace`).'));
     process.exit(1);
   }
 
@@ -168,12 +183,31 @@ export async function verifyBuiltinCommand(options: BuiltinVerifyOptions): Promi
         observations[side] = obs;
       }
 
-      const differences = compareObservations(observations, scn, systemIds);
+      const differences: any[] = compareObservations(observations, scn, systemIds);
+      for (const side of systemIds) {
+        const screenshotPaths = (observations[side]?.actions ?? [])
+          .flatMap((action: any) => action.evidencePaths ?? [])
+          .filter((evidencePath: string) => evidencePath.toLowerCase().endsWith('.png'));
+        const readableScreenshots = (await Promise.all(screenshotPaths.map(async (evidencePath: string) => ({
+          evidencePath,
+          readable: await isReadablePng(evidencePath),
+        })))).filter((entry) => entry.readable);
+
+        if (readableScreenshots.length === 0) {
+          differences.push({
+            severity: 'P1',
+            kind: 'missingScreenshotEvidence',
+            side,
+            expected: 'at least one readable PNG screenshot',
+            actual: screenshotPaths.length === 0 ? 'no PNG screenshot paths' : 'PNG screenshot files are missing or unreadable',
+          });
+        }
+      }
       allDifferences.push(...differences.map((d) => ({ ...d, scenarioId: scn.id, processId: dsl.id })));
 
       const passed = differences.filter((d) => d.severity === 'P0' || d.severity === 'P1').length === 0;
       if (passed) totalPassed += 1;
-      scenarioResults.push({ scenarioId: scn.id, differences, passed, observations });
+      scenarioResults.push({ scenarioId: scn.id, processId: dsl.id, differences, passed, observations });
 
       // Per-scenario evidence index
       await fs.writeFile(
@@ -196,9 +230,19 @@ export async function verifyBuiltinCommand(options: BuiltinVerifyOptions): Promi
   // Build reports
   const releaseGate = allDifferences.filter((d) => d.severity === 'P0' || d.severity === 'P1').length === 0 && totalPassed === totalScenarios ? 'PASS' : 'BLOCKED';
 
+  const executionDetails = Object.fromEntries(scenarioResults.map((result: any) => [result.scenarioId, {
+    scenarioId: result.scenarioId,
+    processId: result.processId,
+    observations: result.observations,
+    differences: result.differences,
+    passed: result.passed,
+  }]));
+
   const jsonReport = {
     id: runId,
     projectId: String((rawConfig.project as any)?.id ?? path.basename(projectPath)),
+    projectName: String((rawConfig.project as any)?.name ?? path.basename(projectPath)),
+    processId: String((rawConfig as any).processId ?? processes[0]?.process.id ?? '-'),
     timestamp: new Date().toISOString(),
     runId,
     projectPath,
@@ -226,6 +270,7 @@ export async function verifyBuiltinCommand(options: BuiltinVerifyOptions): Promi
       }, {}),
     },
     differences: allDifferences,
+    executionDetails,
     releaseGate: {
       allowed: releaseGate === 'PASS',
       blockedBy: releaseGate === 'PASS' ? [] : allDifferences
@@ -243,7 +288,7 @@ export async function verifyBuiltinCommand(options: BuiltinVerifyOptions): Promi
   await fs.writeFile(path.join(runReportDir, 'report.md'), md, 'utf8');
   await fs.writeFile(path.join(reportDir, `${runId}.md`), md, 'utf8');
 
-  const html = renderHtmlReport(jsonReport, scenarios);
+  const html = renderFixedDualRunHtml(jsonReport, scenarios as any);
   await fs.writeFile(path.join(runReportDir, 'report.html'), html, 'utf8');
   await fs.writeFile(path.join(reportDir, `${runId}.html`), html, 'utf8');
 
@@ -263,14 +308,76 @@ export async function verifyBuiltinCommand(options: BuiltinVerifyOptions): Promi
   console.log(chalk.blue(`\nReports written to ${reportDir}`));
   console.log(`Release Gate: ${jsonReport.releaseGate.allowed ? chalk.green('PASS') : chalk.red('BLOCKED')}`);
   console.log(`Passed ${totalPassed}/${totalScenarios}`);
+
+  // Verification may have opened browser instances for screenshot evidence.
+  // Always release them after the canonical reports are durable so the CLI
+  // returns to the shell instead of keeping Node alive on open handles.
+  await Promise.all(Object.values(adapterSet.runtimes).map(cleanupBuiltinRuntime));
 }
 
 async function exists(p: string): Promise<boolean> {
   try { await fs.stat(p); return true; } catch { return false; }
 }
 
+async function delegateToProjectEntrypoint(projectPath: string): Promise<boolean> {
+  const packagePath = path.join(projectPath, 'package.json');
+  if (!(await exists(packagePath))) return false;
+
+  let packageJson: { scripts?: Record<string, string> };
+  try {
+    packageJson = JSON.parse(await fs.readFile(packagePath, 'utf8')) as { scripts?: Record<string, string> };
+  } catch {
+    return false;
+  }
+  if (!packageJson.scripts?.['test:flowtrace']) return false;
+
+  const delegatedProject = process.env.FLOWTRACE_PROJECT_ENTRYPOINT;
+  const insideDeclaredScript = process.env.npm_lifecycle_event === 'test:flowtrace';
+  if (delegatedProject === projectPath || insideDeclaredScript) return false;
+
+  console.log(chalk.blue('Project declares `test:flowtrace`; delegating builtin verification to `npm run test:flowtrace`.'));
+  const exitCode = await new Promise<number>((resolveExit, reject) => {
+    const child = spawn('npm', ['run', 'test:flowtrace'], {
+      cwd: projectPath,
+      env: { ...process.env, FLOWTRACE_PROJECT_ENTRYPOINT: projectPath },
+      stdio: 'inherit',
+    });
+    child.once('error', reject);
+    child.once('exit', (code, signal) => resolveExit(code ?? (signal ? 1 : 0)));
+  });
+  if (exitCode !== 0) process.exitCode = exitCode;
+  return true;
+}
+
+async function isReadablePng(filePath: string): Promise<boolean> {
+  try {
+    const handle = await fs.open(filePath, 'r');
+    try {
+      const signature = Buffer.alloc(8);
+      const { bytesRead } = await handle.read(signature, 0, signature.length, 0);
+      return bytesRead === signature.length
+        && signature.equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+    } finally {
+      await handle.close();
+    }
+  } catch {
+    return false;
+  }
+}
+
 function randomId(): string {
   return Math.random().toString(36).slice(2, 8);
+}
+
+function findMissingCredentialEnv(runtime: RuntimeConfig): string[] {
+  const required = new Set<string>();
+  for (const system of Object.values(runtime.systems)) {
+    for (const actor of Object.values(system.login?.actorMap ?? {})) {
+      required.add(actor.username);
+      required.add(actor.password);
+    }
+  }
+  return [...required].filter((name) => !process.env[name]);
 }
 
 function compareObservations(observations: Record<string, DslScenarioObservation>, scn: LoadedScenario, systemIds: string[]): any[] {
@@ -390,6 +497,25 @@ function renderMarkdownReport(report: any, scenarios: LoadedScenario[]): string 
     lines.push(`### ${result.passed ? '✅' : '❌'} ${result.scenarioId}${scenario?.name ? ` — ${scenario.name}` : ''}`); lines.push('');
     lines.push(`- Result: **${result.passed ? 'PASSED' : 'FAILED'}**`);
     if (result.error) lines.push(`- Error: \`${result.error}\``);
+    for (const side of report.systems) {
+      const observation = result.observations?.[side];
+      lines.push(`#### ${side === report.systems[0] ? 'Legacy' : 'Current'} action trace`); lines.push('');
+      lines.push('| # | Actor | Action | Status | Error | Evidence |');
+      lines.push('| --- | --- | --- | --- | --- | --- |');
+      for (const action of observation?.actions ?? []) {
+        const evidence = (action.evidencePaths ?? []).map((p: string) => p.endsWith('.png')
+          ? `[${p.split('/').pop()}](${p})<br><img src="${p}" alt="FlowTrace screenshot" width="180" height="120">`
+          : `[${p.split('/').pop()}](${p})`).join('<br>') || '-';
+        lines.push(`| ${action.index} | ${action.actor ?? '-'} | ${action.actionId} | ${action.status ?? '-'} | ${action.errorCode ?? '-'} | ${evidence} |`);
+      }
+      lines.push('');
+    }
+    lines.push(`#### Evidence files`); lines.push('');
+    for (const side of report.systems) {
+      for (const action of result.observations?.[side]?.actions ?? []) {
+        for (const p of action.evidencePaths ?? []) lines.push(`- [${side}/${p.split('/').pop()}](${p})`);
+      }
+    }
     lines.push(`- Evidence index: [${result.scenarioId}.json](../scenarios/${result.scenarioId}.json)`); lines.push('');
   }
   if (report.differences.length > 0) {

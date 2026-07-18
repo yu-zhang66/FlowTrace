@@ -76,8 +76,10 @@ Initialize with: flowtrace init --project <target-project>
 When user says "测试登录流程" or similar:
 
 > Routing rule: first read `.flowtrace/flowtrace.yaml`. If
-> `runtime.adapter: builtin`, use `flowtrace verify --project <path>` and do
-> not run the legacy `flowtrace test --mode dual-browser` CAPTCHA/login gate.
+> `runtime.adapter: builtin`, first inspect `package.json`: when it declares
+> `test:flowtrace`, MUST run `npm run test:flowtrace` from the target project;
+> otherwise use `flowtrace verify --project <path>`. Never run the legacy
+> `flowtrace test --mode dual-browser` CAPTCHA/login gate for builtin projects.
 > The legacy login workflow below applies only to projects using the legacy
 > adapter mode.
 
@@ -177,6 +179,21 @@ $ flowtrace generate-cases --project /path/to/project
 
 ## Project-Agnostic Commands
 
+Before invoking builtin verification, inspect the target project's `package.json`.
+If it declares `test:flowtrace`, MUST run exactly `npm run test:flowtrace` from
+that project. Do not replace it with `flowtrace test` or a direct `flowtrace
+verify`; the wrapper may supply required environment setup and must delegate
+execution and rendering to FlowTrace. Only when the script is absent, run
+`flowtrace verify --project <target-project>`.
+
+For builtin runtime, verification already emits canonical JSON, Markdown and
+HTML. NEVER invoke `flowtrace report` afterward. The CLI also refuses to
+regenerate builtin reports, so the fixed report cannot be overwritten.
+
+The CLI enforces the same routing rule: a direct builtin `flowtrace verify` or
+`flowtrace test` invocation delegates to the target project's declared
+`npm run test:flowtrace` entrypoint. Do not bypass or disable this delegation.
+
 All commands use `--project <path>` to specify the target:
 
 ```bash
@@ -196,7 +213,7 @@ flowtrace test --process login
 | User Intent | CLI Command |
 |-------------|-------------|
 | "测试登录流程" | `flowtrace test --project <path> --process login` |
-| "测试 builtin 流程" | `flowtrace verify --project <path>` |
+| "测试 builtin 流程" | `npm run test:flowtrace` when declared; otherwise `flowtrace verify --project <path>` |
 | "运行登录测试" | `flowtrace test --project <path> --process login --mode dual-browser` |
 | "单系统测试" | `flowtrace test --project <path> --process login --mode single-browser` |
 | "测试特定场景" | `flowtrace test --project <path> --scenario <id>` |
@@ -224,7 +241,8 @@ flowtrace test --process login
    → Edit scenarios/<id>.yaml with hand-written scenarios (treated as already CONFIRMED)
 
 4. Verify (config-driven dual-run)
-   → flowtrace verify --project <path>
+   → If package.json declares test:flowtrace: cd <path> && npm run test:flowtrace
+   → Otherwise: flowtrace verify --project <path>
    → Output: <path>/.flowtrace/executions/<run-id>/reports/report.{json,md,html}
    → Output: <path>/.flowtrace/executions/<run-id>/evidence/<side>/<scenarioId>/<NN>-<action>.{json,png}
    → The complete result of one task is always contained in this single run directory.
@@ -311,6 +329,22 @@ Never commit credentials to version control.
 6. **Business isolation** — No business logic in FlowTrace core, CLI or skill. Only `@flowtrace/adapter` generic primitives (HTTP/browser runtime + DSL schema/validator/interpreter + redaction + evidence writer).
 7. **No silent fallback** — Missing config or missing adapter fails with an actionable error; NEVER silently falls back to demo, repository example or `.flowtrace/adapters/` lookup.
 8. **Review status required** — Imported scenarios with `AUTO_EXTRACTED` / `REVIEW_REQUIRED` are refused by `flowtrace verify`; hand-written scenarios are treated as already `CONFIRMED`.
+
+## Fixed Report Contract
+
+Treat report generation as deterministic FlowTrace runtime behavior, never as agent-authored content.
+
+- Always generate HTML through `@flowtrace/reporter`'s `renderFixedDualRunHtml` canonical renderer.
+- Keep templates and rendering code in FlowTrace. Never create them under a target project.
+- Accept only project configuration, scenario definitions, observations and evidence as renderer input.
+- Preserve five summary cards, project and comparison tables, scenario cards, Legacy/Current columns, screenshot grids, action tables and evidence links.
+- Preserve the canonical visual tokens: `#fafafa` background, 1500px main width, white bordered cards, 6px radius, green/red gate states and responsive two-column layout.
+- Embed every PNG screenshot into canonical HTML as a `data:image/png;base64,...` source; never rely on local absolute paths, lazy loading or browser file permissions to display screenshots.
+- Require at least one readable PNG screenshot for every scenario on both Legacy and Current sides. Missing or unreadable screenshots are a P1 `missingScreenshotEvidence` difference and MUST block the Release Gate.
+- Treat missing screenshots as test-infrastructure/evidence failure. Never recommend weakening `execution.failOn`, removing P1, or otherwise bypassing the evidence gate.
+- When the Release Gate is BLOCKED for missing evidence, do not declare the workflow verified or claim business equivalence as a completed conclusion; report the semantic comparison separately from the incomplete verification status.
+- Require dual-side JSON evidence, screenshots, scenario indexes, `report.{json,md,html}` and `run.json` before a bundle may be reported complete.
+- Never let an LLM, agent, CLI entry point or project-local script freely compose report HTML.
 
 ## Files
 

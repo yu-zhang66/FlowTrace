@@ -1,6 +1,7 @@
 import chalk from 'chalk';
 import { resolve, join } from 'path';
 import { existsSync, writeFileSync, readFileSync, readdirSync } from 'fs';
+import yaml from 'js-yaml';
 import {
   loadTargetProjectConfig,
   getReportsDir,
@@ -32,6 +33,17 @@ export async function reportCommand(options: ReportOptions): Promise<void> {
   const projectPath = options.project
     ? resolve(process.cwd(), options.project)
     : resolve(process.cwd());
+
+  if (projectUsesBuiltinRuntime(projectPath)) {
+    const canonicalReport = findCanonicalBuiltinReport(projectPath, options.run);
+    console.log(chalk.yellow('Builtin verification already generates the canonical fixed report; `flowtrace report` will not regenerate or overwrite it.'));
+    if (canonicalReport) {
+      console.log(chalk.green(`Canonical report: ${canonicalReport}`));
+    } else {
+      console.log(chalk.gray('Run `flowtrace verify --project <path>` first.'));
+    }
+    return;
+  }
 
   // --- Gate check ---
   const requirements = gateForCommand('report');
@@ -258,6 +270,30 @@ export async function reportCommand(options: ReportOptions): Promise<void> {
 
   // 生成 reports/index.md
   generateReportsIndex(reportsDir, reportData, targetConfig);
+}
+
+function projectUsesBuiltinRuntime(projectPath: string): boolean {
+  const configPath = resolve(projectPath, '.flowtrace', 'flowtrace.yaml');
+  if (!existsSync(configPath)) return false;
+  try {
+    const raw = yaml.load(readFileSync(configPath, 'utf8')) as any;
+    return raw?.runtime?.adapter === 'builtin';
+  } catch {
+    return false;
+  }
+}
+
+function findCanonicalBuiltinReport(projectPath: string, requestedRun?: string): string | null {
+  const executionsDir = resolve(projectPath, '.flowtrace', 'executions');
+  if (!existsSync(executionsDir)) return null;
+  const runIds = requestedRun
+    ? [requestedRun]
+    : readdirSync(executionsDir).filter((name) => name.startsWith('run-')).sort().reverse();
+  for (const runId of runIds) {
+    const reportPath = resolve(executionsDir, runId, 'reports', 'report.html');
+    if (existsSync(reportPath)) return reportPath;
+  }
+  return null;
 }
 
 function generateReportsIndex(reportsDir: string, run: VerificationRun, config: TargetProjectConfig): void {

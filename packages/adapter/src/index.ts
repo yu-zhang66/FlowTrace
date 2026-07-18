@@ -14,7 +14,7 @@ export * from './runtime/redaction.js';
 export { writeEvidenceFrame, writeEvidenceScreenshot } from './runtime/evidence-writer.js';
 export { BuiltinHttpRuntime } from './runtime/builtin-http-runtime.js';
 export { BuiltinBrowserRuntime } from './runtime/builtin-browser-runtime.js';
-export { createBuiltinRuntime } from './runtime/builtin-runtime.js';
+export { createBuiltinRuntime, cleanupBuiltinRuntime } from './runtime/builtin-runtime.js';
 export type { BuiltinRuntime, BuiltinRuntimeOptions } from './runtime/builtin-runtime.js';
 export {
   RuntimeChannelSchema,

@@ -19,6 +19,13 @@ export interface BuiltinRuntimeOptions {
 
 export type BuiltinRuntime = BuiltinHttpRuntime | BuiltinBrowserRuntime;
 
+/** Release browser/evidence resources before a verification process exits. */
+export async function cleanupBuiltinRuntime(runtime: BuiltinRuntime): Promise<void> {
+  if ('cleanup' in runtime && typeof runtime.cleanup === 'function') {
+    await runtime.cleanup();
+  }
+}
+
 export function createBuiltinRuntime(options: BuiltinRuntimeOptions): BuiltinRuntime {
   switch (options.system.channel) {
     case 'http':

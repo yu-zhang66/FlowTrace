@@ -48,13 +48,18 @@ instructions: |
      - Fix any validation errors
 
   7. **Verification / Test**
-     Gate requires: `init`, `config`, `recording-confirmed`, `cases-valid`, `captcha-key`
-     - Run: `flowtrace test --project <path>`
+     - Read `.flowtrace/flowtrace.yaml` before choosing the command
+     - For `runtime.adapter: builtin`, if package.json declares `test:flowtrace`, run `npm run test:flowtrace` from the target project
+     - For builtin projects without that script, run `flowtrace verify --project <path>`
+     - Use legacy `flowtrace test` only for legacy adapters
      - Analyze differences by severity
 
   8. **Reporting**
-     Gate requires: `init`, `config`
-     - Run: `flowtrace report --project <path> --format html`
+     - For builtin runtime, use `report.json`, `report.md` and `report.html` already emitted by verification
+     - Do not run `flowtrace report` again or replace canonical execution HTML
+     - Require readable PNG evidence for both Legacy and Current on every scenario
+     - Treat `missingScreenshotEvidence` as P1 and report the Release Gate as BLOCKED
+     - Use the canonical self-contained HTML whose screenshots are embedded as data URIs
      - Review release gate status
 
   ## Gate Requirements Summary
@@ -85,11 +90,8 @@ instructions: |
   # Validate scenarios (requires: init, config, cases)
   flowtrace validate-cases --project <path>
 
-  # Run verification (requires: init, config, recording-confirmed, cases-valid, captcha-key)
-  flowtrace test --project <path>
-
-  # Generate report (requires: init, config)
-  flowtrace report --project <path> --format html
+  # Run builtin verification when no project wrapper is declared
+  flowtrace verify --project <path>
   ```
 
   ## Difference Severity
@@ -109,3 +111,8 @@ instructions: |
   - Use programmatic release gates, not AI judgment
   - **Always check gate status BEFORE executing commands**
   - **Report missing prerequisites to user instead of proceeding with invalid state**
+  - Prefer a declared `test:flowtrace` entrypoint because it may provide required environment setup while still delegating rendering to FlowTrace
+  - Do not invoke a second report renderer after builtin verification
+  - Do not report a builtin run complete unless both sides have readable screenshots and the HTML contains embedded screenshot data
+  - Never recommend removing P1 from `execution.failOn` to bypass screenshot evidence failures
+  - A BLOCKED evidence gate is an incomplete verification, even when semantic paths and final states match

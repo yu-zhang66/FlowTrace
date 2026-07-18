@@ -118,6 +118,14 @@ export class BuiltinHttpRuntime {
     this.cookieJar.clear();
   }
 
+  async cleanup(): Promise<void> {
+    try { await this.screenshotContext?.close?.(); } catch { /* best effort */ }
+    try { await this.screenshotBrowser?.close?.(); } catch { /* best effort */ }
+    this.screenshotContext = null;
+    this.screenshotBrowser = null;
+    this.screenshotPage = null;
+  }
+
   getCookieJar(): CookieJar { return this.cookieJar; }
   getSlot(name: string): unknown { return this.slotStore.get(name); }
   setSlot(name: string, value: unknown): void { this.slotStore.set(name, value); }
