@@ -122,8 +122,11 @@ export type DslStep =
   | DslExtractStep
   | DslAssertStep
   | DslScreenshotStep
+  | DslEvaluateStep
   | DslConditionalStep
-  | DslRepeatStep;
+  | DslRepeatStep
+  | DslEnsureLoginStep
+  | DslEnsureLogoutStep;
 
 export interface DslBaseStep {
   /** Optional human-readable label, surfaced in evidence. */
@@ -246,6 +249,23 @@ export interface DslScreenshotStep extends DslBaseStep {
   system?: string;
 }
 
+/**
+ * Execute an arbitrary JavaScript expression in the browser page and capture
+ * the result. Useful for reading values that are only available in the
+ * frontend state (e.g. Vue/React component data, window globals, or computed
+ * DOM queries).
+ */
+export interface DslEvaluateStep extends DslBaseStep {
+  type: 'evaluate';
+  /** JavaScript expression evaluated in the page context (must return a value). */
+  script: string;
+  /** Optional slot name to store the result into. */
+  captureAs?: string;
+  /** When true, also append the stringified result to the semantic path. */
+  pushToPath?: boolean;
+  system?: string;
+}
+
 export interface DslConditionalStep extends DslBaseStep {
   type: 'conditional';
   /** Branch selector (slot existence, equals, etc.). */
@@ -258,6 +278,27 @@ export interface DslRepeatStep extends DslBaseStep {
   type: 'repeat';
   times: number;
   steps: DslStep[];
+}
+
+/**
+ * Ensure the session is logged in as a specific actor before continuing.
+ * Runs the standard login sequence (logging out any existing session first).
+ * Commonly used as the first step of a scenario so each test starts from a
+ * known, correct authentication state.
+ */
+export interface DslEnsureLoginStep extends DslBaseStep {
+  type: 'ensure-login';
+  /** Actor whose credentials to use. Defaults to the action/scenario actor. */
+  actor?: string;
+}
+
+/**
+ * Ensure the session is logged out before continuing. Logs out any existing
+ * session (no-op when already logged out). Used to prove a test starts from
+ * an unauthenticated state.
+ */
+export interface DslEnsureLogoutStep extends DslBaseStep {
+  type: 'ensure-logout';
 }
 
 /** Action declaration inside a process DSL or scenario. */
@@ -317,6 +358,8 @@ export interface DslActionObservation {
     stateBefore: string | null;
     stateAfter: string | null;
   } | null;
+  /** Captured slot values produced by this action (evaluate/extract/observe). */
+  captures?: Record<string, unknown>;
   startedAt: string;
   finishedAt: string;
 }
@@ -328,6 +371,8 @@ export interface DslScenarioObservation {
   finalState: string | null;
   semanticPath: string[];
   actions: DslActionObservation[];
+  /** Aggregated captures from all actions (keyed by slot name). */
+  captures?: Record<string, unknown>;
   error: string | null;
   startedAt: string;
   finishedAt: string;

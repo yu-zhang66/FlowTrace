@@ -23,6 +23,13 @@ import { dualRunCommand } from './commands/dual-run.js';
 
 const program = new Command();
 
+/** Commander option collector: pushes each occurrence into an array. */
+function collectValue(value: string, previous: string[]): string[] {
+  previous = previous ?? [];
+  previous.push(value);
+  return previous;
+}
+
 program
   .command('pipeline')
   .description('Run the complete FlowTrace MVP pipeline')
@@ -121,10 +128,12 @@ program
 
 program
   .command('verify')
-  .description('Run dual-run verification')
+  .description('Run verification (dual-run by default; single-side with --system)')
   .option('-p, --project <path>', 'Project root path')
   .option('-s, --scenarios <path>', 'Scenarios directory (defaults to config)')
   .option('-o, --output <path>', 'Output directory (defaults to config)')
+  .option('-x, --system <id>', 'Run only the given system id (single-side). Repeatable, e.g. -x current', collectValue, [])
+  .option('-w, --process <id>', 'Run only the given process id. Repeatable, e.g. -w smoke', collectValue, [])
   .action(verifyCommand);
 
 program
