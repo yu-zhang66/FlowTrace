@@ -18,6 +18,66 @@ import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import yaml from 'js-yaml';
 
+// ============================================================
+// Template resolution
+// ============================================================
+
+/** Load template definitions from a YAML file. */
+export async function loadTemplates(templatePath: string): Promise<Record<string, { steps: unknown[] }>> {
+  try {
+    const raw = await fs.readFile(templatePath, 'utf8');
+    const parsed = yaml.load(raw) as Record<string, unknown> | null;
+    return (parsed?.templates as Record<string, { steps: unknown[] }>) ?? {};
+  } catch {
+    return {};
+  }
+}
+
+/** Substitute `{{ varName }}` in all string values of an object tree. */
+function substituteParams(obj: unknown, params: Record<string, string>): unknown {
+  if (typeof obj === 'string') {
+    return obj.replace(/\{\{\s*([^}]+)\s*\}\}/g, (_, name) => {
+      const key = String(name).trim();
+      return Object.prototype.hasOwnProperty.call(params, key) ? params[key] : `{{ ${key} }}`;
+    });
+  }
+  if (Array.isArray(obj)) return obj.map((v) => substituteParams(v, params));
+  if (obj && typeof obj === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
+      out[k] = substituteParams(v, params);
+    }
+    return out;
+  }
+  return obj;
+}
+
+/** Recursively resolve template references in steps. */
+function resolveTemplateSteps(
+  steps: unknown[],
+  templates: Record<string, { steps: unknown[] }>,
+  params: Record<string, string>,
+  depth: number = 0,
+): unknown[] {
+  if (depth > 10) return steps; // guard against infinite recursion
+  const resolved: unknown[] = [];
+  for (const step of steps) {
+    const s = step as Record<string, unknown> | null;
+    if (s?.type === 'template' && s?.name && templates[String(s.name)]) {
+      const tmpl = templates[String(s.name)];
+      const mergedParams = { ...params, ...(s.params as Record<string, string> ?? {}) };
+      const expanded = resolveTemplateSteps(tmpl.steps, templates, mergedParams, depth + 1);
+      // Apply parameter substitution to the expanded steps
+      const substituted = expanded.map((e) => substituteParams(e, mergedParams));
+      resolved.push(...substituted);
+    } else {
+      // Apply parameter substitution to non-template steps too
+      resolved.push(substituteParams(step, params));
+    }
+  }
+  return resolved;
+}
+
 export type ScenarioReviewStatus = 'AUTO_EXTRACTED' | 'REVIEW_REQUIRED' | 'CONFIRMED';
 
 export interface LoadedScenario {
@@ -58,17 +118,21 @@ export interface LoadedScenario {
 }
 
 export async function loadAllScenarios(scenariosDir: string): Promise<LoadedScenario[]> {
+  const flowtraceDir = path.dirname(scenariosDir);
+  const templatePath = path.join(flowtraceDir, 'templates.yaml');
+  const templates = await loadTemplates(templatePath);
+
   const files: string[] = [];
   await walk(scenariosDir, files);
   const out: LoadedScenario[] = [];
   for (const file of files) {
-    const loaded = await loadScenarioFile(file);
+    const loaded = await loadScenarioFile(file, templates);
     if (loaded) out.push(loaded);
   }
   return out;
 }
 
-export async function loadScenarioFile(filePath: string): Promise<LoadedScenario | null> {
+export async function loadScenarioFile(filePath: string, templates?: Record<string, { steps: unknown[] }>): Promise<LoadedScenario | null> {
   if (!filePath.endsWith('.yaml') && !filePath.endsWith('.yml')) return null;
   const raw = await fs.readFile(filePath, 'utf8');
   const parsed = yaml.load(raw) as Record<string, unknown> | null;
@@ -96,7 +160,15 @@ export async function loadScenarioFile(filePath: string): Promise<LoadedScenario
   // A standalone scenario inlines its own DSL steps (`steps:`) instead of
   // referencing process actions (`actions:`). It needs no process file.
   const standalone = Array.isArray(parsed.steps);
-  const inlineSteps = standalone ? (parsed.steps as unknown[]) : undefined;
+  // Resolve template references in inline steps
+  let inlineSteps = standalone ? (parsed.steps as unknown[]) : undefined;
+  if (inlineSteps && templates && Object.keys(templates).length > 0) {
+    const scenarioParams: Record<string, string> = {};
+    // Extract scenario-level params (id, actor, etc.) as template variables
+    if (typeof parsed.id === 'string') scenarioParams.id = parsed.id;
+    if (typeof parsed.actor === 'string') scenarioParams.actor = parsed.actor;
+    inlineSteps = resolveTemplateSteps(inlineSteps, templates, scenarioParams);
+  }
   const actor = typeof parsed.actor === 'string' ? parsed.actor : undefined;
 
   const actionsRaw = Array.isArray(parsed.actions) ? parsed.actions : [];

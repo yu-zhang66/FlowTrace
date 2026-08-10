@@ -44,7 +44,7 @@ export class PlaywrightBrowserTestAdapter implements BrowserTestAdapter {
 
     const launchOptions = {
       headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--window-size=1920,1080', '--start-maximized']
     };
     const launchWithRetry = async (options: Parameters<typeof chromium.launch>[0], label: string) => {
       let lastError: unknown;
@@ -73,7 +73,7 @@ export class PlaywrightBrowserTestAdapter implements BrowserTestAdapter {
     }
 
     this.context = await this.browser.newContext({
-      viewport: { width: 1280, height: 720 },
+      viewport: { width: 1920, height: 1080 },
       ignoreHTTPSErrors: true
     });
 
@@ -89,7 +89,7 @@ export class PlaywrightBrowserTestAdapter implements BrowserTestAdapter {
       // A page may still have active requests after a login attempt; waiting
       // for its close can otherwise block the next scenario indefinitely.
       const nextContext = await this.browser.newContext({
-        viewport: { width: 1280, height: 720 },
+        viewport: { width: 1920, height: 1080 },
         ignoreHTTPSErrors: true
       });
       const nextPage = await nextContext.newPage();

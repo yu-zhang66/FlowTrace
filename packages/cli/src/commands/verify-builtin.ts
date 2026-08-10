@@ -45,6 +45,8 @@ interface BuiltinVerifyOptions {
   system?: string[];
   /** Restrict verification to the given process id(s). When absent, all processes run. */
   process?: string[];
+  /** Stop execution immediately when any scenario fails. Default: false. */
+  stopOnFailure?: boolean;
 }
 
 const REQUIRED_PER_SIDE = 2;
@@ -72,6 +74,9 @@ export async function verifyBuiltinCommand(options: BuiltinVerifyOptions): Promi
     console.error(chalk.red(`flowtrace.yaml has no runtime: block. Run \`flowtrace init\` to generate a fresh config-driven layout.`));
     process.exit(1);
   }
+
+  // Resolve stopOnFailure: CLI option takes precedence over config, default false
+  const stopOnFailure = options.stopOnFailure ?? ((rawConfig.execution as any)?.stopOnFailure === true);
 
   // Fail before creating an execution bundle when login credentials are not
   // available. An adapter-error bundle cannot contain meaningful traces or
@@ -321,7 +326,10 @@ export async function verifyBuiltinCommand(options: BuiltinVerifyOptions): Promi
       }
       allDifferences.push(...differences.map((d) => ({ ...d, scenarioId: scn.id, processId: dsl.id })));
 
-      const passed = differences.filter((d) => d.severity === 'P0' || d.severity === 'P1').length === 0;
+      const side = systemIds[0] ?? '';
+      const obs = observations[side];
+      const hasAdapterError = !!obs?.error || obs?.actions?.some((a: any) => a.illegalTransition);
+      const passed = !hasAdapterError && differences.filter((d) => d.severity === 'P0' || d.severity === 'P1').length === 0;
       if (passed) totalPassed += 1;
       scenarioResults.push({ scenarioId: scn.id, processId: dsl.id, differences, passed, observations });
       previousActor = scenarioActor ?? null;
@@ -341,6 +349,21 @@ export async function verifyBuiltinCommand(options: BuiltinVerifyOptions): Promi
       );
 
       console.log(`  [${passed ? chalk.green('PASS') : chalk.red('FAIL')}] ${scn.id}`);
+
+      // Stop execution immediately when a scenario fails, if configured.
+      // This prevents cascading failures from a broken initiator flowing
+      // into downstream todo scenarios that depend on the previous step.
+      if (!passed && stopOnFailure) {
+        console.log(chalk.yellow(`\n⛔ Stopping execution: scenario ${scn.id} failed and stopOnFailure is enabled.`));
+        console.log(chalk.gray(`   Remaining scenarios in this process will be skipped.`));
+        break;
+      }
+    }
+
+    // If stopOnFailure was triggered, break out of the process loop as well
+    if (stopOnFailure) {
+      const lastScenario = scenarioResults[scenarioResults.length - 1];
+      if (lastScenario && !lastScenario.passed) break;
     }
   }
 

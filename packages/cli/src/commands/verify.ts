@@ -33,6 +33,8 @@ interface VerifyOptions {
   output?: string;
   system?: string[];
   process?: string[];
+  /** Stop execution immediately when any scenario fails. Default: false. */
+  stopOnFailure?: boolean;
 }
 
 /** Detect whether the project's flowtrace.yaml uses the config-driven runtime. */
@@ -57,7 +59,7 @@ export async function verifyCommand(options: VerifyOptions): Promise<void> {
   // legacy adapter loader path used for `runtime.adapter: legacy`.
   if (projectUsesBuiltinRuntime(projectPath)) {
     const { verifyBuiltinCommand } = await import('./verify-builtin.js');
-    await verifyBuiltinCommand({ project: projectPath, output: options.output, system: options.system, process: options.process });
+    await verifyBuiltinCommand({ project: projectPath, output: options.output, system: options.system, process: options.process, stopOnFailure: options.stopOnFailure });
     return;
   }
 

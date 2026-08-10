@@ -97,18 +97,25 @@ export class BuiltinBrowserRuntime {
   async resetScenario(): Promise<void> {
     if (!this.browser) throw new Error('initialize() must be called before resetScenario()');
     const headed = this.system.browser?.headless === false;
+    this.loggedInActor = null;
     if (headed) {
       // In headed mode creating a new BrowserContext opens a brand-new browser
-      // window. Avoid touching the page/context here; let ensureLoggedIn() handle
-      // logout and login on the existing window so no empty about:blank window
-      // appears between scenarios.
-      this.loggedInActor = null;
+      // window. Clear storage on the current page before closing it to avoid
+      // the flash caused by opening a temporary page and navigating to baseUrl.
+      try {
+        const current = this.page;
+        if (current && !current.isClosed?.()) {
+          await current.evaluate('window.localStorage.clear(); window.sessionStorage.clear();').catch(() => undefined);
+          await current.close();
+        }
+      } catch { /* ignore */ }
+      this.page = null;
+      try { await this.context?.clearCookies?.(); } catch { /* ignore */ }
       return;
     }
     try { await this.context?.close?.(); } catch { /* ignore */ }
     this.context = await this.browser.newContext();
     this.page = null;
-    this.loggedInActor = null;
   }
 
   /**
@@ -238,6 +245,11 @@ export class BuiltinBrowserRuntime {
         const pageError = await this.detectPageError(page);
         throw new Error(pageError ? `Login failed: ${pageError}` : `Login failed: URL did not match success pattern ${successPattern}`);
       }
+      // After login redirect, wait for the SPA to fully render before the
+      // scenario starts interacting with the page. Without this, the first
+      // run (cold cache) may fail because the page content is not ready yet
+      // while subsequent runs (warm cache) succeed.
+      await page.waitForLoadState('networkidle', { timeout: timeoutMs }).catch(() => undefined);
     } else {
       await page.waitForLoadState('networkidle', { timeout: timeoutMs }).catch(() => undefined);
       const pageError = await this.detectPageError(page);
@@ -402,6 +414,11 @@ export class BuiltinBrowserRuntime {
     if (!alreadyThere) {
       await page.goto(target, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
       await page.waitForLoadState('networkidle', { timeout: timeoutMs }).catch(() => undefined);
+    } else {
+      // Even when already on the target URL (e.g. after login redirect), the
+      // SPA may still be rendering its content. Wait for network idle so the
+      // scenario doesn't interact with a half-loaded page.
+      await page.waitForLoadState('networkidle', { timeout: timeoutMs }).catch(() => undefined);
     }
     // In headed mode an inactive window can stall the scenario; bring it to the
     // front after every navigation so the user sees the live page and Playwright
@@ -437,7 +454,30 @@ export class BuiltinBrowserRuntime {
     const sel = this.resolveSelector(input.selector);
     const timeoutMs = this.system.browser?.timeoutMs;
     await page.fill(sel, value, { timeout: timeoutMs });
-    const pageError = await this.detectPageError(page);
+    // Verify the value was actually written. Some dynamic forms clear or
+    // reject inputs silently; catching an empty required field here stops
+    // the scenario before a later submit fails with a cryptic error.
+    if (value && value.trim() !== '') {
+      const actualValue = await page.inputValue(sel).catch(() => '');
+      if ((actualValue ?? '').trim() === '') {
+        const evidencePath = await writeEvidenceFrame({
+          evidenceRoot: this.evidenceRoot ?? '',
+          side: this.side,
+          scenarioId: this.scenarioId ?? 'unknown-scenario',
+          actionIndex: input.actionIndex,
+          stepIndex: input.stepIndex,
+          action: input.action,
+          actor: input.actor,
+          request: { method: 'FORM', url: page.url(), body: { [input.selector]: '[redacted]' } },
+          response: { status: 400, body: { error: `Field ${sel} is empty after fill` }, headers: { 'content-type': 'text/html' } },
+          stateBefore: this.lastStateBefore,
+          stateAfter: null,
+          semanticPath: this.semanticPath,
+          redactor: this.redactor,
+        });
+        return { evidencePath, error: { code: 'FIELD_EMPTY', message: `Field ${sel} is empty after fill` } };
+      }
+    }
     const evidencePath = await writeEvidenceFrame({
       evidenceRoot: this.evidenceRoot ?? '',
       side: this.side,
@@ -447,15 +487,12 @@ export class BuiltinBrowserRuntime {
       action: input.action,
       actor: input.actor,
       request: { method: 'FORM', url: page.url(), body: { [input.selector]: '[redacted]' } },
-      response: { status: pageError ? 400 : 200, body: pageError ? { error: pageError } : null, headers: { 'content-type': 'text/html' } },
+      response: { status: 200, body: null, headers: { 'content-type': 'text/html' } },
       stateBefore: this.lastStateBefore,
       stateAfter: null,
       semanticPath: this.semanticPath,
       redactor: this.redactor,
     });
-    if (pageError) {
-      return { evidencePath, error: { code: 'PAGE_ERROR', message: pageError } };
-    }
     return { evidencePath };
   }
 
@@ -471,7 +508,11 @@ export class BuiltinBrowserRuntime {
     };
     page.on?.('response', listener);
     try {
-      await page.click(sel, { timeout: timeoutMs });
+      const locator = page.locator(sel).first();
+      // Ensure the target is scrolled into view, including inside nested
+      // scrollable containers such as task drawers.
+      await locator.scrollIntoViewIfNeeded({ timeout: timeoutMs }).catch(() => undefined);
+      await locator.click({ timeout: timeoutMs });
       await page.waitForLoadState('networkidle', { timeout: timeoutMs }).catch(() => undefined);
     } finally {
       page.off?.('response', listener);
@@ -501,17 +542,20 @@ export class BuiltinBrowserRuntime {
   }
 
   private async detectPageError(page: MinimalPage): Promise<string | null> {
-    const combinedSelector = [
+    const errorSelectors = [
       '.el-message--error .el-message__content',
+      '.el-message--error',
       '.el-message__content:has-text(失败)',
       '.el-message__content:has-text(错误)',
+      '.el-message .el-message__content:has-text(不能为空)',
       '.el-form-item__error',
       '.el-notification__content:has-text(失败)',
       '.el-notification__content:has-text(错误)',
       '.ant-message-error .ant-message-error-content',
       '.ant-form-item-explain-error',
-    ].join(', ');
-    const text = await page.locator(combinedSelector).first().textContent({ timeout: 500 }).catch(() => null);
+    ];
+    const combinedSelector = errorSelectors.join(', ');
+    const text = await page.locator(combinedSelector).first().textContent({ timeout: 1000 }).catch(() => null);
     if (text?.trim()) return text.trim();
     // Also detect common HTTP error pages or blank error states.
     const title = await page.title().catch(() => null);

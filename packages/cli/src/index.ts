@@ -134,6 +134,7 @@ program
   .option('-o, --output <path>', 'Output directory (defaults to config)')
   .option('-x, --system <id>', 'Run only the given system id (single-side). Repeatable, e.g. -x current', collectValue, [])
   .option('-w, --process <id>', 'Run only the given process id. Repeatable, e.g. -w smoke', collectValue, [])
+  .option('--stop-on-failure', 'Stop execution immediately when any scenario fails', false)
   .action(verifyCommand);
 
 program
