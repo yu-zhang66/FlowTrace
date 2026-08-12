@@ -61,6 +61,6 @@ export { interpretScenario } from './dsl/interpreter.js';
 export type { InterpreterContext, InterpreterOptions } from './dsl/interpreter.js';
 export * from './loader/runtime-loader.js';
 export * from './loader/process-loader.js';
-export { loadAllScenarios, loadScenarioFile, ScenarioNotConfirmedError } from './loader/scenario-loader.js';
+export { loadAllScenarios, loadScenarioFile, loadFlowDefScenarios, ScenarioNotConfirmedError } from './loader/scenario-loader.js';
 export type { LoadedScenario, ScenarioReviewStatus as AdapterScenarioReviewStatus } from './loader/scenario-loader.js';
 export * from './loader/import-package.js';
