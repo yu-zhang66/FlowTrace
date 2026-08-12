@@ -41,6 +41,12 @@ import { renderFixedDualRunHtml } from '@flowtrace/reporter';
 interface BuiltinVerifyOptions {
   project?: string;
   output?: string;
+  /** Restrict verification to the given system id(s). When absent, all systems run. */
+  system?: string[];
+  /** Restrict verification to the given process id(s). When absent, all processes run. */
+  process?: string[];
+  /** Stop execution immediately when any scenario fails. Default: false. */
+  stopOnFailure?: boolean;
 }
 
 const REQUIRED_PER_SIDE = 2;
@@ -69,10 +75,13 @@ export async function verifyBuiltinCommand(options: BuiltinVerifyOptions): Promi
     process.exit(1);
   }
 
+  // Resolve stopOnFailure: CLI option takes precedence over config, default false
+  const stopOnFailure = options.stopOnFailure ?? ((rawConfig.execution as any)?.stopOnFailure === true);
+
   // Fail before creating an execution bundle when login credentials are not
   // available. An adapter-error bundle cannot contain meaningful traces or
   // screenshots and must not be mistaken for a completed dual-run.
-  const missingCredentials = findMissingCredentialEnv(runtimeBlock);
+  const missingCredentials = findMissingCredentialEnv(runtimeBlock, (options.system ?? []).filter(Boolean));
   if (missingCredentials.length > 0) {
     console.error(chalk.red(`Missing runtime credentials: ${missingCredentials.join(', ')}`));
     console.error(chalk.yellow('Provide them through the project environment (for the mock demo: `npm run test:flowtrace`).'));
@@ -80,7 +89,7 @@ export async function verifyBuiltinCommand(options: BuiltinVerifyOptions): Promi
   }
 
   const processesDir = path.join(flowtraceRoot, 'processes');
-  const processes = await loadAllProcessDsls(processesDir);
+  let processes = await loadAllProcessDsls(processesDir);
   if (processes.length === 0) {
     console.error(chalk.red(`No process DSL found in ${processesDir}. Add processes/<id>.yaml before running verify.`));
     process.exit(1);
@@ -88,10 +97,55 @@ export async function verifyBuiltinCommand(options: BuiltinVerifyOptions): Promi
 
   const scenariosDir = path.join(flowtraceRoot, 'scenarios');
   const allScenarios = await loadAllScenarios(scenariosDir);
-  const scenarios = allScenarios.filter((s) => s.enabled !== false);
+  let scenarios = allScenarios.filter((s) => s.enabled !== false);
+  const scenarioFilter = process.env.FLOWTRACE_SCENARIO_IDS?.split(',').map((id) => id.trim()).filter(Boolean);
+  if (scenarioFilter && scenarioFilter.length > 0) {
+    scenarios = scenarios.filter((s) => scenarioFilter.includes(s.id));
+    if (scenarios.length === 0) {
+      console.error(chalk.red(`No scenarios matched FLOWTRACE_SCENARIO_IDS=${process.env.FLOWTRACE_SCENARIO_IDS}`));
+      process.exit(1);
+    }
+  }
   if (scenarios.length === 0) {
     console.error(chalk.red('No scenarios found to verify.'));
     process.exit(1);
+  }
+
+  // --- Standalone (functional) scenarios ---------------------------------
+  // A standalone scenario inlines its own DSL steps (`steps:`) and needs no
+  // `processes/<id>.yaml`. We synthesize a virtual process per group so the
+  // existing interpreter/reporter pipeline runs unchanged. The grouping id
+  // comes from the scenario's `process:` field (default `functional`).
+  const standaloneScenarios = scenarios.filter((s) => s.standalone);
+  const existingProcessIds = new Set(processes.map((p) => p.process.id));
+  const vGroups: Record<string, LoadedScenario[]> = {};
+  for (const s of standaloneScenarios) {
+    let group = s.process || 'functional';
+    if (existingProcessIds.has(group)) group = `${group}-functional`;
+    s.process = group; // keep grouping consistent with the virtual process
+    s.actions = [{ action: s.id, actor: s.actor }];
+    (vGroups[group] ||= []).push(s);
+  }
+  for (const [groupId, group] of Object.entries(vGroups)) {
+    processes.push({
+      process: {
+        id: groupId,
+        name: groupId,
+        channel: 'browser',
+        actions: group.map((s) => ({ id: s.id, name: s.name, steps: (s.inlineSteps ?? []) as any[] })),
+      },
+      sourceFile: '<inline:standalone-scenarios>',
+    });
+  }
+
+  const requestedProcesses = (options.process ?? []).filter(Boolean);
+  if (requestedProcesses.length > 0) {
+    const missing = requestedProcesses.filter((id) => !processes.some((p) => p.process.id === id));
+    if (missing.length > 0) {
+      console.error(chalk.red(`Requested process(es) not found: ${missing.join(', ')}. Available: ${processes.map((p) => p.process.id).join(', ')}`));
+      process.exit(1);
+    }
+    processes = processes.filter((p) => requestedProcesses.includes(p.process.id));
   }
 
   // Per-process confirmation check
@@ -110,7 +164,15 @@ export async function verifyBuiltinCommand(options: BuiltinVerifyOptions): Promi
     }
   }
 
-  const runId = `run-${new Date().toISOString().replace(/[:.]/g, '-')}-${randomId()}`;
+  // Run folder / report names include the processes under verification so
+  // distinct runs (e.g. a login run vs a switch-account run) are easy to tell
+  // apart in `.flowtrace/executions/`.
+  const procSlug = processes
+    .filter((proc) => (byProcess[proc.process.id] ?? []).length > 0)
+    .map((proc) => proc.process.id)
+    .join('-') || 'verify';
+  const ts = new Date().toISOString().replace(/[:.]/g, '-');
+  const runId = `run-${ts}-${procSlug}-${randomId()}`;
   const executionRoot = path.join(flowtraceRoot, 'executions', runId);
   const reportDir = options.output ? path.resolve(projectPath, options.output) : path.join(flowtraceRoot, 'reports');
   const runReportDir = path.join(executionRoot, 'reports');
@@ -149,11 +211,52 @@ export async function verifyBuiltinCommand(options: BuiltinVerifyOptions): Promi
     await fs.mkdir(path.join(executionRoot, 'evidence', sysId), { recursive: true });
   }
 
-  const systemIds = Object.keys(adapterSet.runtimes);
-  if (systemIds.length < REQUIRED_PER_SIDE) {
-    console.error(chalk.red(`Dual-run verify requires at least 2 systems; got ${systemIds.length}.`));
+  const allRuntimeIds = Object.keys(adapterSet.runtimes);
+  const requested = (options.system ?? []).filter(Boolean);
+  const systemIds = requested.length > 0
+    ? allRuntimeIds.filter((id) => requested.includes(id))
+    : allRuntimeIds;
+
+  if (requested.length > 0) {
+    const missing = requested.filter((id) => !allRuntimeIds.includes(id));
+    if (missing.length > 0) {
+      console.error(chalk.red(`Requested system(s) not found: ${missing.join(', ')}. Available: ${allRuntimeIds.join(', ')}`));
+      process.exit(1);
+    }
+  }
+
+  if (systemIds.length < (requested.length > 0 ? 1 : REQUIRED_PER_SIDE)) {
+    console.error(chalk.red(`Verify requires at least ${requested.length > 0 ? 1 : REQUIRED_PER_SIDE} system(s); got ${systemIds.length}.`));
     process.exit(1);
   }
+
+  // Initialize every runtime (launch browsers / create contexts) before
+  // interpreting any scenario. Without this, browser runtimes throw
+  // `initialize() must be called before ensurePage()` on the first action.
+  for (const side of systemIds) {
+    const runtime = adapterSet.runtimes[side]!;
+    if ('initialize' in runtime && typeof runtime.initialize === 'function') {
+      await runtime.initialize();
+    }
+  }
+
+  let cleanupRan = false;
+  const cleanup = async () => {
+    if (cleanupRan) return;
+    cleanupRan = true;
+    // Verification may have opened browser instances for screenshot evidence.
+    // Always release them so the CLI returns to the shell instead of keeping
+    // Node alive on open handles and leaving zombie Chrome processes behind.
+    await Promise.all(Object.values(adapterSet?.runtimes ?? {}).map(cleanupBuiltinRuntime));
+  };
+  const signalHandler = async () => {
+    await cleanup();
+    process.exit(130);
+  };
+  process.once('SIGINT', signalHandler);
+  process.once('SIGTERM', signalHandler);
+
+  try {
 
   const allDifferences: any[] = [];
   const scenarioResults: any[] = [];
@@ -166,17 +269,35 @@ export async function verifyBuiltinCommand(options: BuiltinVerifyOptions): Promi
     const dsl = proc.process;
     console.log(chalk.blue(`\n[process] ${dsl.id} — ${procScoped.length} scenario(s)`));
 
+    let previousActor: string | null = null;
     for (const scn of procScoped) {
       totalScenarios += 1;
       const observations: Record<string, DslScenarioObservation> = {};
+      const scenarioActor = scn.actions[0]?.actor;
 
       for (const side of systemIds) {
         const runtime = adapterSet.runtimes[side]!;
+        // Isolate scenarios in a fresh BrowserContext only when the actor
+        // changes. This avoids repeated logout/login flashing for consecutive
+        // scenarios run by the same user while still preventing session/cookie
+        // leakage across different actors.
+        if (scenarioActor !== previousActor) {
+          if ('resetScenario' in runtime && typeof runtime.resetScenario === 'function') {
+            await runtime.resetScenario();
+          }
+        }
         runtime.setScenario(scn.id);
         const obs = await interpretScenario({ runtime, process: dsl }, {
           scenarioId: scn.id,
           defaultActor: scn.actions[0]?.actor,
           steps: scn.actions.map((a) => ({ action: a.action, actor: a.actor, data: a.data })),
+          precondition: (scn as any).precondition
+            ? {
+                loginAs: (scn as any).precondition.loginAs,
+                logout: (scn as any).precondition.logout,
+                actor: scn.actions[0]?.actor,
+              }
+            : undefined,
           continueOnError: Array.isArray((scn as any).expected?.illegalActions)
             && (scn as any).expected.illegalActions.length > 1,
         });
@@ -205,9 +326,13 @@ export async function verifyBuiltinCommand(options: BuiltinVerifyOptions): Promi
       }
       allDifferences.push(...differences.map((d) => ({ ...d, scenarioId: scn.id, processId: dsl.id })));
 
-      const passed = differences.filter((d) => d.severity === 'P0' || d.severity === 'P1').length === 0;
+      const side = systemIds[0] ?? '';
+      const obs = observations[side];
+      const hasAdapterError = !!obs?.error || obs?.actions?.some((a: any) => a.illegalTransition);
+      const passed = !hasAdapterError && differences.filter((d) => d.severity === 'P0' || d.severity === 'P1').length === 0;
       if (passed) totalPassed += 1;
       scenarioResults.push({ scenarioId: scn.id, processId: dsl.id, differences, passed, observations });
+      previousActor = scenarioActor ?? null;
 
       // Per-scenario evidence index
       await fs.writeFile(
@@ -224,6 +349,21 @@ export async function verifyBuiltinCommand(options: BuiltinVerifyOptions): Promi
       );
 
       console.log(`  [${passed ? chalk.green('PASS') : chalk.red('FAIL')}] ${scn.id}`);
+
+      // Stop execution immediately when a scenario fails, if configured.
+      // This prevents cascading failures from a broken initiator flowing
+      // into downstream todo scenarios that depend on the previous step.
+      if (!passed && stopOnFailure) {
+        console.log(chalk.yellow(`\n⛔ Stopping execution: scenario ${scn.id} failed and stopOnFailure is enabled.`));
+        console.log(chalk.gray(`   Remaining scenarios in this process will be skipped.`));
+        break;
+      }
+    }
+
+    // If stopOnFailure was triggered, break out of the process loop as well
+    if (stopOnFailure) {
+      const lastScenario = scenarioResults[scenarioResults.length - 1];
+      if (lastScenario && !lastScenario.passed) break;
     }
   }
 
@@ -309,10 +449,14 @@ export async function verifyBuiltinCommand(options: BuiltinVerifyOptions): Promi
   console.log(`Release Gate: ${jsonReport.releaseGate.allowed ? chalk.green('PASS') : chalk.red('BLOCKED')}`);
   console.log(`Passed ${totalPassed}/${totalScenarios}`);
 
-  // Verification may have opened browser instances for screenshot evidence.
-  // Always release them after the canonical reports are durable so the CLI
-  // returns to the shell instead of keeping Node alive on open handles.
-  await Promise.all(Object.values(adapterSet.runtimes).map(cleanupBuiltinRuntime));
+  } finally {
+    // Verification may have opened browser instances for screenshot evidence.
+    // Always release them after the canonical reports are durable so the CLI
+    // returns to the shell instead of keeping Node alive on open handles.
+    // Signal handlers also call cleanup to avoid leaving zombie Chrome processes
+    // behind when the user interrupts the run.
+    await cleanup();
+  }
 }
 
 async function exists(p: string): Promise<boolean> {
@@ -369,9 +513,10 @@ function randomId(): string {
   return Math.random().toString(36).slice(2, 8);
 }
 
-function findMissingCredentialEnv(runtime: RuntimeConfig): string[] {
+function findMissingCredentialEnv(runtime: RuntimeConfig, requestedSystems: string[] = []): string[] {
   const required = new Set<string>();
-  for (const system of Object.values(runtime.systems)) {
+  for (const [sysId, system] of Object.entries(runtime.systems)) {
+    if (requestedSystems.length > 0 && !requestedSystems.includes(sysId)) continue;
     for (const actor of Object.values(system.login?.actorMap ?? {})) {
       required.add(actor.username);
       required.add(actor.password);
@@ -455,52 +600,52 @@ function normalizeActualIllegal(obs: DslScenarioObservation): Array<{ actionInde
 
 function renderMarkdownReport(report: any, scenarios: LoadedScenario[]): string {
   const lines: string[] = [];
-  lines.push(`# FlowTrace Dual-Run Inspection Report — ${report.runId}`);
+  lines.push(`# FlowTrace 双跑核查报告 — ${report.runId}`);
   lines.push('');
-  lines.push('## Summary'); lines.push('');
-  lines.push('| Metric | Value |'); lines.push('| --- | --- |');
-  lines.push(`| Run ID | \`${report.runId}\` |`);
-  lines.push(`| Project | \`${report.projectPath}\` |`);
-  lines.push(`| Runtime | \`${report.runtimeAdapter}\` |`);
-  lines.push(`| Systems | ${report.systems.map((s: string) => `\`${s}\``).join(', ')} |`);
-  lines.push(`| Total Scenarios | ${report.totalScenarios} |`);
-  lines.push(`| Passed | ${report.totalPassed} |`);
-  lines.push(`| Failed | ${report.totalFailed} |`);
-  lines.push(`| Release Gate | **${report.releaseGate.allowed ? 'PASS' : 'BLOCKED'}** |`);
+  lines.push('## 汇总'); lines.push('');
+  lines.push('| 指标 | 值 |'); lines.push('| --- | --- |');
+  lines.push(`| 运行ID | \`${report.runId}\` |`);
+  lines.push(`| 项目 | \`${report.projectPath}\` |`);
+  lines.push(`| 运行时 | \`${report.runtimeAdapter}\` |`);
+  lines.push(`| 系统 | ${report.systems.map((s: string) => `\`${s}\``).join(', ')} |`);
+  lines.push(`| 用例总数 | ${report.totalScenarios} |`);
+  lines.push(`| 通过 | ${report.totalPassed} |`);
+  lines.push(`| 失败 | ${report.totalFailed} |`);
+  lines.push(`| 发布门禁 | **${report.releaseGate.allowed ? '通过' : '阻断'}** |`);
   lines.push('');
-  lines.push('## Final state comparison'); lines.push('');
-  lines.push('| Scenario | Legacy | Current | Result |'); lines.push('| --- | --- | --- | --- |');
+  lines.push('## 终态对比'); lines.push('');
+  lines.push('| 用例 | 老系统 | 新系统 | 结果 |'); lines.push('| --- | --- | --- | --- |');
   for (const result of report.scenarios) {
     const observations = result.observations ?? {};
     const sides = report.systems.map((side: string) => observations[side]);
     lines.push(`| ${result.scenarioId} | ${formatVal(sides[0]?.finalState)} | ${formatVal(sides[1]?.finalState)} | ${result.passed ? '✅' : '❌'} |`);
   }
   lines.push('');
-  lines.push('## Semantic path comparison'); lines.push('');
-  lines.push('| Scenario | Legacy path | Current path |'); lines.push('| --- | --- | --- |');
+  lines.push('## 语义路径对比'); lines.push('');
+  lines.push('| 用例 | 老系统路径 | 新系统路径 |'); lines.push('| --- | --- | --- |');
   for (const result of report.scenarios) {
     const observations = result.observations ?? {};
     lines.push(`| ${result.scenarioId} | ${formatVal(observations[report.systems[0]]?.semanticPath)} | ${formatVal(observations[report.systems[1]]?.semanticPath)} |`);
   }
   lines.push('');
-  lines.push('## Illegal transition comparison (per declared action)'); lines.push('');
-  lines.push('| Scenario | Expected | Legacy | Current |'); lines.push('| --- | --- | --- | --- |');
+  lines.push('## 非法转换对比（按声明的动作）'); lines.push('');
+  lines.push('| 用例 | 期望 | 老系统 | 新系统 |'); lines.push('| --- | --- | --- | --- |');
   for (const result of report.scenarios) {
     const expected = scenarios.find((s) => s.id === result.scenarioId)?.expected as any;
     const observations = result.observations ?? {};
     lines.push(`| ${result.scenarioId} | ${formatVal(expected?.illegalActions ?? [])} | ${formatVal(observations[report.systems[0]]?.actions?.filter((a: any) => a.illegalTransition).map((a: any) => a.illegalTransition))} | ${formatVal(observations[report.systems[1]]?.actions?.filter((a: any) => a.illegalTransition).map((a: any) => a.illegalTransition))} |`);
   }
   lines.push('');
-  lines.push('## Scenario evidence and inspection details'); lines.push('');
+  lines.push('## 用例证据与核查详情'); lines.push('');
   for (const result of report.scenarios) {
     const scenario = scenarios.find((s) => s.id === result.scenarioId);
     lines.push(`### ${result.passed ? '✅' : '❌'} ${result.scenarioId}${scenario?.name ? ` — ${scenario.name}` : ''}`); lines.push('');
-    lines.push(`- Result: **${result.passed ? 'PASSED' : 'FAILED'}**`);
-    if (result.error) lines.push(`- Error: \`${result.error}\``);
+    lines.push(`- 结果：**${result.passed ? '通过' : '失败'}**`);
+    if (result.error) lines.push(`- 错误：\`${result.error}\``);
     for (const side of report.systems) {
       const observation = result.observations?.[side];
-      lines.push(`#### ${side === report.systems[0] ? 'Legacy' : 'Current'} action trace`); lines.push('');
-      lines.push('| # | Actor | Action | Status | Error | Evidence |');
+      lines.push(`#### ${side === report.systems[0] ? '老系统' : '新系统'} 动作轨迹`); lines.push('');
+      lines.push('| # | 角色 | 动作 | 状态 | 错误 | 证据 |');
       lines.push('| --- | --- | --- | --- | --- | --- |');
       for (const action of observation?.actions ?? []) {
         const evidence = (action.evidencePaths ?? []).map((p: string) => p.endsWith('.png')
@@ -510,27 +655,27 @@ function renderMarkdownReport(report: any, scenarios: LoadedScenario[]): string 
       }
       lines.push('');
     }
-    lines.push(`#### Evidence files`); lines.push('');
+    lines.push(`#### 证据文件`); lines.push('');
     for (const side of report.systems) {
       for (const action of result.observations?.[side]?.actions ?? []) {
         for (const p of action.evidencePaths ?? []) lines.push(`- [${side}/${p.split('/').pop()}](${p})`);
       }
     }
-    lines.push(`- Evidence index: [${result.scenarioId}.json](../scenarios/${result.scenarioId}.json)`); lines.push('');
+    lines.push(`- 证据索引：[${result.scenarioId}.json](../scenarios/${result.scenarioId}.json)`); lines.push('');
   }
   if (report.differences.length > 0) {
-    lines.push(`## Differences (${report.differences.length})`);
+    lines.push(`## 差异（${report.differences.length}）`);
     lines.push('');
-    lines.push('| Scenario | Process | Severity | Kind | Base | Other |');
+    lines.push('| 用例 | 流程 | 严重级 | 类型 | 基线 | 对端 |');
     lines.push('| --- | --- | --- | --- | --- | --- |');
     for (const d of report.differences) {
       lines.push(`| ${d.scenarioId} | ${d.processId} | ${d.severity} | ${d.kind} | ${formatVal(d.baseValue ?? d.baseSide)} | ${formatVal(d.otherValue ?? d.otherSide)} |`);
     }
   }
-  lines.push('## Execution summary'); lines.push('');
-  lines.push(`Scenarios: **${report.totalPassed}/${report.totalScenarios} passed**`); lines.push('');
-  lines.push('## Release Gate'); lines.push('');
-  lines.push(`**Status:** ${report.releaseGate.allowed ? '✅ ALLOWED' : '❌ BLOCKED'}`);
+  lines.push('## 执行汇总'); lines.push('');
+  lines.push(`用例：**${report.totalPassed}/${report.totalScenarios} 通过**`); lines.push('');
+  lines.push('## 发布门禁'); lines.push('');
+  lines.push(`**状态：** ${report.releaseGate.allowed ? '✅ 允许' : '❌ 阻断'}`);
   return lines.join('\n');
 }
 

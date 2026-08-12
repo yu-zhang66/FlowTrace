@@ -41,6 +41,19 @@ export interface InterpreterOptions {
    * multiple illegal actions (for example, a read-only role probing several
    * forbidden operations). Defaults to fail-fast. */
   continueOnError?: boolean;
+  /**
+   * Authoritative login state to establish before the main steps run. Runs
+   * before any action so the scenario starts from a known authentication
+   * state (e.g. `{ loginAs: 'admin' }` or `{ logout: true }`).
+   */
+  precondition?: {
+    /** Log in as this actor before the scenario steps run. */
+    loginAs?: string;
+    /** Ensure logged out before the scenario steps run. */
+    logout?: boolean;
+    /** Default actor used when `loginAs` is not set. */
+    actor?: string;
+  };
 }
 
 interface StepExecutionResult {
@@ -62,6 +75,20 @@ export async function interpretScenario(ctx: InterpreterContext, opts: Interpret
   const observations: DslActionObservation[] = [];
   let error: string | null = null;
   let finalState: string | null = null;
+
+  // Establish the required authentication precondition before any action runs.
+  // This enforces the "check login state before starting the flow" rule: if a
+  // session is already logged in it is logged out first, then the correct
+  // actor is logged in per the scenario.
+  const precondition = opts.precondition;
+  if (precondition) {
+    const pActor = precondition.loginAs ?? precondition.actor;
+    if (precondition.loginAs && pActor) {
+      await (ctx.runtime as any).ensureLoggedIn?.(pActor);
+    } else if (precondition.logout) {
+      await (ctx.runtime as any).ensureLoggedOut?.();
+    }
+  }
 
   for (let i = 0; i < opts.steps.length; i++) {
     const step = opts.steps[i]!;
@@ -188,15 +215,25 @@ async function runStep(
         return { status: null, errorCode: 'CHANNEL_MISMATCH', message: 'goto step requires browser channel', evidencePath: null, screenshotPath: null, capturedState: null };
       }
       const browser = ctx.runtime as any;
-      const { evidencePath } = await browser.goto({ page: step.page, url: step.url, ...base });
-      return { status: 200, errorCode: null, message: null, evidencePath, screenshotPath: null, capturedState: null };
+      const { evidencePath, screenshotPath } = await browser.goto({ page: step.page, url: step.url, ...base });
+      return { status: 200, errorCode: null, message: null, evidencePath, screenshotPath, capturedState: null };
     }
     case 'fill': {
       if (ctx.runtime.system.channel !== 'browser') {
         return { status: null, errorCode: 'CHANNEL_MISMATCH', message: 'fill step requires browser channel', evidencePath: null, screenshotPath: null, capturedState: null };
       }
       const browser = ctx.runtime as any;
-      const { evidencePath } = await browser.fill({ selector: step.selector, value: step.value, valueRef: step.valueRef, ...base });
+      const { evidencePath, error } = await browser.fill({ selector: step.selector, value: step.value, valueRef: step.valueRef, ...base });
+      if (error) {
+        return {
+          status: 400,
+          errorCode: error.code,
+          message: error.message,
+          evidencePath,
+          screenshotPath: null,
+          capturedState: null,
+        };
+      }
       return { status: 200, errorCode: null, message: null, evidencePath, screenshotPath: null, capturedState: null };
     }
     case 'click': {
@@ -204,7 +241,17 @@ async function runStep(
         return { status: null, errorCode: 'CHANNEL_MISMATCH', message: 'click step requires browser channel', evidencePath: null, screenshotPath: null, capturedState: null };
       }
       const browser = ctx.runtime as any;
-      const { evidencePath, screenshotPath } = await browser.click({ selector: step.selector, ...base });
+      const { evidencePath, screenshotPath, error } = await browser.click({ selector: step.selector, ...base });
+      if (error) {
+        return {
+          status: 400,
+          errorCode: error.code,
+          message: error.message,
+          evidencePath,
+          screenshotPath,
+          capturedState: null,
+        };
+      }
       return { status: 200, errorCode: null, message: null, evidencePath, screenshotPath, capturedState: null };
     }
     case 'select': {
@@ -230,8 +277,8 @@ async function runStep(
       if (ctx.runtime.system.channel !== 'browser') {
         return { status: null, errorCode: 'CHANNEL_MISMATCH', message: 'wait step requires browser channel', evidencePath: null, screenshotPath: null, capturedState: null };
       }
-      await (ctx.runtime as any).wait({ for: step.for, timeoutMs: step.timeoutMs, ...base });
-      return { status: 200, errorCode: null, message: null, evidencePath: null, screenshotPath: null, capturedState: null };
+      const { evidencePath, screenshotPath } = await (ctx.runtime as any).wait({ for: step.for, timeoutMs: step.timeoutMs, ...base });
+      return { status: 200, errorCode: null, message: null, evidencePath, screenshotPath, capturedState: null };
     }
     case 'request': {
       if (ctx.runtime.system.channel !== 'http') {
@@ -378,6 +425,24 @@ async function runStep(
       const { path } = await browser.screenshot({ name: step.name, ...base });
       return { status: 200, errorCode: null, message: null, evidencePath: null, screenshotPath: path, capturedState: null };
     }
+    case 'evaluate': {
+      if (ctx.runtime.system.channel !== 'browser') {
+        return { status: null, errorCode: 'CHANNEL_MISMATCH', message: 'evaluate step requires browser channel', evidencePath: null, screenshotPath: null, capturedState: null };
+      }
+      const browser = ctx.runtime as any;
+      const { result, evidencePath } = await browser.evaluate({ script: step.script, captureAs: step.captureAs, pushToPath: step.pushToPath, ...base });
+      if (result && typeof result === 'object' && 'error' in result) {
+        return {
+          status: 500,
+          errorCode: 'EVALUATE_SCRIPT_ERROR',
+          message: typeof (result as any).error === 'string' ? (result as any).error : JSON.stringify(result),
+          evidencePath,
+          screenshotPath: null,
+          capturedState: null,
+        };
+      }
+      return { status: 200, errorCode: null, message: null, evidencePath, screenshotPath: null, capturedState: step.pushToPath && result != null ? String(result) : null };
+    }
     case 'conditional': {
       const cond = evalAssertion(ctx, step.when);
       const branch = cond.ok ? step.then : (step.else ?? []);
@@ -394,6 +459,24 @@ async function runStep(
           if (out.errorCode) return out;
         }
       }
+      return { status: 200, errorCode: null, message: null, evidencePath: null, screenshotPath: null, capturedState: null };
+    }
+    case 'ensure-login': {
+      if (ctx.runtime.system.channel !== 'browser') {
+        return { status: null, errorCode: 'CHANNEL_MISMATCH', message: 'ensure-login step requires browser channel', evidencePath: null, screenshotPath: null, capturedState: null };
+      }
+      const actor = step.actor ?? env.actor;
+      if (!actor) {
+        return { status: 409, errorCode: 'MISSING_ACTOR', message: 'ensure-login step requires an actor', evidencePath: null, screenshotPath: null, capturedState: null };
+      }
+      await (ctx.runtime as any).ensureLoggedIn(actor);
+      return { status: 200, errorCode: null, message: null, evidencePath: null, screenshotPath: null, capturedState: null };
+    }
+    case 'ensure-logout': {
+      if (ctx.runtime.system.channel !== 'browser') {
+        return { status: null, errorCode: 'CHANNEL_MISMATCH', message: 'ensure-logout step requires browser channel', evidencePath: null, screenshotPath: null, capturedState: null };
+      }
+      await (ctx.runtime as any).ensureLoggedOut();
       return { status: 200, errorCode: null, message: null, evidencePath: null, screenshotPath: null, capturedState: null };
     }
     default: {

@@ -18,6 +18,66 @@ import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import yaml from 'js-yaml';
 
+// ============================================================
+// Template resolution
+// ============================================================
+
+/** Load template definitions from a YAML file. */
+export async function loadTemplates(templatePath: string): Promise<Record<string, { steps: unknown[] }>> {
+  try {
+    const raw = await fs.readFile(templatePath, 'utf8');
+    const parsed = yaml.load(raw) as Record<string, unknown> | null;
+    return (parsed?.templates as Record<string, { steps: unknown[] }>) ?? {};
+  } catch {
+    return {};
+  }
+}
+
+/** Substitute `{{ varName }}` in all string values of an object tree. */
+function substituteParams(obj: unknown, params: Record<string, string>): unknown {
+  if (typeof obj === 'string') {
+    return obj.replace(/\{\{\s*([^}]+)\s*\}\}/g, (_, name) => {
+      const key = String(name).trim();
+      return Object.prototype.hasOwnProperty.call(params, key) ? params[key] : `{{ ${key} }}`;
+    });
+  }
+  if (Array.isArray(obj)) return obj.map((v) => substituteParams(v, params));
+  if (obj && typeof obj === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
+      out[k] = substituteParams(v, params);
+    }
+    return out;
+  }
+  return obj;
+}
+
+/** Recursively resolve template references in steps. */
+function resolveTemplateSteps(
+  steps: unknown[],
+  templates: Record<string, { steps: unknown[] }>,
+  params: Record<string, string>,
+  depth: number = 0,
+): unknown[] {
+  if (depth > 10) return steps; // guard against infinite recursion
+  const resolved: unknown[] = [];
+  for (const step of steps) {
+    const s = step as Record<string, unknown> | null;
+    if (s?.type === 'template' && s?.name && templates[String(s.name)]) {
+      const tmpl = templates[String(s.name)];
+      const mergedParams = { ...params, ...(s.params as Record<string, string> ?? {}) };
+      const expanded = resolveTemplateSteps(tmpl.steps, templates, mergedParams, depth + 1);
+      // Apply parameter substitution to the expanded steps
+      const substituted = expanded.map((e) => substituteParams(e, mergedParams));
+      resolved.push(...substituted);
+    } else {
+      // Apply parameter substitution to non-template steps too
+      resolved.push(substituteParams(step, params));
+    }
+  }
+  return resolved;
+}
+
 export type ScenarioReviewStatus = 'AUTO_EXTRACTED' | 'REVIEW_REQUIRED' | 'CONFIRMED';
 
 export interface LoadedScenario {
@@ -37,25 +97,48 @@ export interface LoadedScenario {
   imported: boolean;
   status: ScenarioReviewStatus;
   sourceFile: string;
+  /** Standalone scenarios inline their own DSL steps and need no process file. */
+  standalone?: boolean;
+  /** Inline DSL steps for standalone scenarios. */
+  inlineSteps?: unknown[];
+  /** Scenario-level actor (used by standalone scenarios). */
+  actor?: string;
+  /**
+   * Authoritative login state a scenario must start from, established before
+   * its main steps run. `loginAs` ensures the given actor is authenticated
+   * (logging out any existing session first); `logout` ensures the session is
+   * unauthenticated. Enforces the "check login state before the flow" rule.
+   */
+  precondition?: {
+    /** Log in as this actor before the scenario steps run. */
+    loginAs?: string;
+    /** Ensure logged out before the scenario steps run. */
+    logout?: boolean;
+  };
 }
 
 export async function loadAllScenarios(scenariosDir: string): Promise<LoadedScenario[]> {
+  const flowtraceDir = path.dirname(scenariosDir);
+  const templatePath = path.join(flowtraceDir, 'templates.yaml');
+  const templates = await loadTemplates(templatePath);
+
   const files: string[] = [];
   await walk(scenariosDir, files);
   const out: LoadedScenario[] = [];
   for (const file of files) {
-    const loaded = await loadScenarioFile(file);
+    const loaded = await loadScenarioFile(file, templates);
     if (loaded) out.push(loaded);
   }
   return out;
 }
 
-export async function loadScenarioFile(filePath: string): Promise<LoadedScenario | null> {
+export async function loadScenarioFile(filePath: string, templates?: Record<string, { steps: unknown[] }>): Promise<LoadedScenario | null> {
   if (!filePath.endsWith('.yaml') && !filePath.endsWith('.yml')) return null;
   const raw = await fs.readFile(filePath, 'utf8');
   const parsed = yaml.load(raw) as Record<string, unknown> | null;
   if (!parsed || typeof parsed !== 'object') return null;
-  if (!parsed.id || !parsed.process) return null;
+  if (!parsed.id) return null;
+  if (!parsed.process && !Array.isArray(parsed.steps)) return null;
 
   const imported = parsed.imported === true;
   const explicitStatus = typeof parsed.status === 'string' ? (parsed.status as ScenarioReviewStatus) : undefined;
@@ -63,6 +146,30 @@ export async function loadScenarioFile(filePath: string): Promise<LoadedScenario
 
   const expected = (parsed.expected ?? {}) as Record<string, unknown>;
   const illegalActions = normaliseIllegal(expected);
+
+  // Scenario-level login precondition (optional). Enforces the rule that a
+  // flow must start from a known authentication state.
+  const preconditionRaw = (parsed.precondition ?? null) as null | Record<string, unknown>;
+  let precondition: LoadedScenario['precondition'];
+  if (preconditionRaw && typeof preconditionRaw === 'object') {
+    const loginAs = typeof preconditionRaw.loginAs === 'string' ? preconditionRaw.loginAs : undefined;
+    const logout = preconditionRaw.logout === true;
+    if (loginAs || logout) precondition = { loginAs, logout: logout || undefined };
+  }
+
+  // A standalone scenario inlines its own DSL steps (`steps:`) instead of
+  // referencing process actions (`actions:`). It needs no process file.
+  const standalone = Array.isArray(parsed.steps);
+  // Resolve template references in inline steps
+  let inlineSteps = standalone ? (parsed.steps as unknown[]) : undefined;
+  if (inlineSteps && templates && Object.keys(templates).length > 0) {
+    const scenarioParams: Record<string, string> = {};
+    // Extract scenario-level params (id, actor, etc.) as template variables
+    if (typeof parsed.id === 'string') scenarioParams.id = parsed.id;
+    if (typeof parsed.actor === 'string') scenarioParams.actor = parsed.actor;
+    inlineSteps = resolveTemplateSteps(inlineSteps, templates, scenarioParams);
+  }
+  const actor = typeof parsed.actor === 'string' ? parsed.actor : undefined;
 
   const actionsRaw = Array.isArray(parsed.actions) ? parsed.actions : [];
   const actions = actionsRaw.map((a: any) => ({
@@ -74,7 +181,7 @@ export async function loadScenarioFile(filePath: string): Promise<LoadedScenario
   const out: LoadedScenario = {
     id: String(parsed.id),
     name: typeof parsed.name === 'string' ? parsed.name : String(parsed.id),
-    process: String(parsed.process),
+    process: parsed.process ? String(parsed.process) : 'functional',
     enabled: parsed.enabled !== false,
     severity: (parsed.severity as any) ?? 'P2',
     tags: Array.isArray(parsed.tags) ? parsed.tags.map((t) => String(t)) : [],
@@ -88,6 +195,10 @@ export async function loadScenarioFile(filePath: string): Promise<LoadedScenario
     imported,
     status,
     sourceFile: filePath,
+    standalone,
+    inlineSteps,
+    actor,
+    precondition,
   };
   return out;
 }
