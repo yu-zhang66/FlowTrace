@@ -99,18 +99,19 @@ export class BuiltinBrowserRuntime {
     const headed = this.system.browser?.headless === false;
     this.loggedInActor = null;
     if (headed) {
-      // In headed mode creating a new BrowserContext opens a brand-new browser
-      // window. Clear storage on the current page before closing it to avoid
-      // the flash caused by opening a temporary page and navigating to baseUrl.
+      // Keep the existing headed page/window. Closing it here makes Chrome for
+      // Testing destroy the visible tab and create a replacement on the next
+      // ensurePage(), which produces a noticeable flash/flicker between
+      // scenarios. Authentication is reset by ensureLoggedOut()/ensureLoggedIn()
+      // on this same page; clearing cookies here is sufficient for the next
+      // scenario and avoids creating an about:blank replacement window.
+      try { await this.context?.clearCookies?.(); } catch { /* ignore */ }
       try {
         const current = this.page;
         if (current && !current.isClosed?.()) {
           await current.evaluate('window.localStorage.clear(); window.sessionStorage.clear();').catch(() => undefined);
-          await current.close();
         }
       } catch { /* ignore */ }
-      this.page = null;
-      try { await this.context?.clearCookies?.(); } catch { /* ignore */ }
       return;
     }
     try { await this.context?.close?.(); } catch { /* ignore */ }
