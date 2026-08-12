@@ -117,6 +117,189 @@ export interface LoadedScenario {
   };
 }
 
+// ============================================================
+// FlowDef-based scenario expansion
+// ============================================================
+
+interface FlowDefYaml {
+  flowName: string;
+  commonFormFields?: Record<string, string>;
+  plants: Record<string, FlowDefPlant>;
+}
+
+interface FlowDefPlant {
+  name: string;
+  prefix: string;
+  initiate: {
+    actor: string;
+    nextNode: string;
+    formFields?: Record<string, string>;
+  };
+  steps: FlowDefStep[];
+}
+
+interface FlowDefStep {
+  taskName: string;
+  actor: string;
+  nextNode: string;
+  fillTemplate?: string;
+}
+
+function pad(n: number) { return String(n).padStart(3, '0'); }
+
+function computeRegexPattern(taskName: string): string {
+  if (taskName.includes('明细')) {
+    return '.*(货运|货票)明细(表)?制单.*';
+  }
+  if (/[()]/.test(taskName)) {
+    return `.*${taskName.replace(/\(/g, '\\(').replace(/\)/g, '\\)')}.*`;
+  }
+  return taskName;
+}
+
+function makeScenario(
+  id: string,
+  name: string,
+  actor: string,
+  process: string,
+  tags: string[],
+  inlineSteps: unknown[],
+  sourceFile: string,
+): LoadedScenario {
+  return {
+    id,
+    name,
+    process,
+    enabled: true,
+    severity: 'P0',
+    tags,
+    source: [],
+    actions: [{ action: id, actor }],
+    expected: { finalState: null, semanticPath: [], illegalActions: [] },
+    imported: false,
+    status: 'CONFIRMED',
+    sourceFile,
+    standalone: true,
+    inlineSteps,
+    actor,
+    precondition: { loginAs: actor },
+  };
+}
+
+export async function loadFlowDefScenarios(
+  flowtraceDir: string,
+  templates: Record<string, { steps: unknown[] }>,
+): Promise<LoadedScenario[]> {
+  const scenarios: LoadedScenario[] = [];
+  const scenariosDir = path.join(flowtraceDir, 'scenarios');
+
+  // Find scenario files that reference a flowDef
+  let entries: any[] = [];
+  try { entries = await fs.readdir(scenariosDir, { withFileTypes: true }); } catch { return scenarios; }
+
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+    if (!entry.name.endsWith('.yaml') && !entry.name.endsWith('.yml')) continue;
+
+    const filePath = path.join(scenariosDir, entry.name);
+    let parsed: Record<string, unknown> | null;
+    try {
+      const raw = await fs.readFile(filePath, 'utf8');
+      parsed = yaml.load(raw) as Record<string, unknown> | null;
+    } catch { continue; }
+    if (!parsed || typeof parsed.flowDef !== 'string') continue;
+
+    const flowDefName = parsed.flowDef;
+    const flowDefPath = path.join(flowtraceDir, 'flow-defs', `${flowDefName}.yaml`);
+    let flowDef: FlowDefYaml;
+    try {
+      const raw = await fs.readFile(flowDefPath, 'utf8');
+      flowDef = yaml.load(raw) as FlowDefYaml;
+    } catch (err) {
+      console.warn(`[flowtrace] flowDef "${flowDefName}" not found at ${flowDefPath}: ${err instanceof Error ? err.message : String(err)}`);
+      continue;
+    }
+    if (!flowDef || !flowDef.plants) continue;
+
+    const flowName = flowDef.flowName || flowDefName;
+    const plantKeys = Array.isArray(parsed.plants) ? parsed.plants as string[] : Object.keys(flowDef.plants);
+    const commonFields = flowDef.commonFormFields ?? {};
+
+    for (const plantKey of plantKeys) {
+      const plant = flowDef.plants[plantKey];
+      if (!plant) continue;
+
+      const sourceFile = `<flowDef:${flowDefName}@${plantKey}>`;
+
+      // --- Initiate scenario ---
+      const init = plant.initiate;
+      const allFormFields: Record<string, string> = { ...commonFields, ...(init.formFields ?? {}) };
+      const initParams: Record<string, string> = {
+        plantKey,
+        plantName: plant.name,
+        flowName,
+        nextNode: init.nextNode,
+        ...allFormFields,
+      };
+      const initSteps = resolveTemplateSteps(
+        templates['initiate']?.steps ?? [],
+        templates,
+        initParams,
+      );
+      scenarios.push(makeScenario(
+        `tc-${plantKey}-initiate-001`,
+        `${flowName}-${plant.name}-发起流程`,
+        init.actor,
+        'functional',
+        ['flow-center', 'initiate', 'port-coal', plantKey, 'main'],
+        initSteps.map((s) => substituteParams(s, initParams)),
+        sourceFile,
+      ));
+
+      // --- Todo scenarios ---
+      let idx = 1;
+      for (const step of plant.steps) {
+        if (step.taskName === '流程结束') continue;
+
+        const templateName = step.fillTemplate === 'qualityFormFields'
+          ? 'todo-fill-quality'
+          : step.fillTemplate === 'freigthFormFields'
+          ? 'todo-fill-freight'
+          : 'todo-no-fill';
+
+        const regexPattern = computeRegexPattern(step.taskName);
+        const todoParams: Record<string, string> = {
+          plantKey,
+          actor: step.actor,
+          taskName: step.taskName,
+          regexPattern,
+          flowName,
+          nextNode: step.nextNode,
+          index: String(idx),
+        };
+
+        const todoSteps = resolveTemplateSteps(
+          templates[templateName]?.steps ?? [],
+          templates,
+          todoParams,
+        );
+        scenarios.push(makeScenario(
+          `tc-${plantKey}-todo-${pad(idx)}`,
+          `${flowName}-${plant.name}-${step.taskName}`,
+          step.actor,
+          'functional',
+          ['flow-center', 'todo', 'port-coal', plantKey, 'main'],
+          todoSteps.map((s) => substituteParams(s, todoParams)),
+          sourceFile,
+        ));
+        idx++;
+      }
+    }
+  }
+
+  return scenarios;
+}
+
 export async function loadAllScenarios(scenariosDir: string): Promise<LoadedScenario[]> {
   const flowtraceDir = path.dirname(scenariosDir);
   const templatePath = path.join(flowtraceDir, 'templates.yaml');
@@ -129,6 +312,11 @@ export async function loadAllScenarios(scenariosDir: string): Promise<LoadedScen
     const loaded = await loadScenarioFile(file, templates);
     if (loaded) out.push(loaded);
   }
+
+  // Expand flowDef-based scenarios (one file → many virtual scenarios)
+  const flowDefScenarios = await loadFlowDefScenarios(flowtraceDir, templates);
+  out.push(...flowDefScenarios);
+
   return out;
 }
 
@@ -139,6 +327,9 @@ export async function loadScenarioFile(filePath: string, templates?: Record<stri
   if (!parsed || typeof parsed !== 'object') return null;
   if (!parsed.id) return null;
   if (!parsed.process && !Array.isArray(parsed.steps)) return null;
+
+  // Skip flowDef scenario files (they are expanded by loadFlowDefScenarios)
+  if (parsed.flowDef) return null;
 
   const imported = parsed.imported === true;
   const explicitStatus = typeof parsed.status === 'string' ? (parsed.status as ScenarioReviewStatus) : undefined;
